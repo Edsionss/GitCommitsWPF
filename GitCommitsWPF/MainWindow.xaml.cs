@@ -21,6 +21,9 @@ using ListBox = System.Windows.Controls.ListBox;
 using Orientation = System.Windows.Controls.Orientation;
 using HorizontalAlignment = System.Windows.HorizontalAlignment;
 using Formatting = Newtonsoft.Json.Formatting;
+using TabControl = System.Windows.Controls.TabControl;
+using TabItem = System.Windows.Controls.TabItem;
+using DockPanel = System.Windows.Controls.DockPanel;
 using GitCommitsWPF.Models;
 using GitCommitsWPF.Services;
 using GitCommitsWPF.Utils;
@@ -40,6 +43,7 @@ namespace GitCommitsWPF
         private List<string> _saveLocations = new List<string>(); // 保存最近保存的文件的位置
         private const int MaxSaveLocations = 10; // 最多保存10个最近保存的文件的位置
         private List<string> _recentAuthors = new List<string>(); // 保存最近使用的作者
+        private List<string> _scannedAuthors = new List<string>(); // 保存扫描出来的作者
         private const int MaxRecentAuthors = 10; // 最多保存10个最近使用的作者
         private string _tempScanPath = ""; // 用于保存临时扫描路径
         public MainWindow()
@@ -73,6 +77,9 @@ namespace GitCommitsWPF
                     AddToRecentAuthors(AuthorTextBox.Text);
                 }
             };
+
+            // 加载扫描到的作者
+            LoadScannedAuthors();
         }
 
         // 配置DataGrid的属性和行为
@@ -345,7 +352,7 @@ namespace GitCommitsWPF
 
             // 显示进度条
             ProgressBar.Visibility = Visibility.Visible;
-            ProgressBar.Value = 0;
+            ProgressBar.Value = 5; // 设置初始进度值
             StartButton.IsEnabled = false;
             _isRunning = true;
 
@@ -431,12 +438,18 @@ namespace GitCommitsWPF
             {
                 pathsText = PathsTextBox.Text;
                 verifyGitPaths = VerifyGitPathsCheckBox.IsChecked == true;
+                // 立即设置初始进度值，让用户知道程序已开始运行
+                UpdateProgressBar(10);
+                UpdateOutput("正在初始化Git仓库扫描...");
             });
             var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
             // 计算日期范围
             string since = "";
             string until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd"); // 设置到明天来包含今天的提交
+            
+            // 增加进度到15%，表示日期处理阶段
+            UpdateProgressBar(15);
 
             var timeRange = "";
             Dispatcher.Invoke(() =>
@@ -516,10 +529,17 @@ namespace GitCommitsWPF
                 }
             }
             string gitFormat = string.Join("|", gitFormatParts);
+            
+            // 增加进度到20%，表示准备阶段完成
+            UpdateProgressBar(20);
 
             // 查找所有Git仓库
-            UpdateOutput("正在扫描Git仓库，请稍后...");
+            UpdateOutput("正在搜索Git仓库，请稍后...");
             var gitRepos = new List<DirectoryInfo>();
+            
+            // 搜索仓库阶段，分配20%-40%的进度
+            int pathIndex = 0;
+            int totalPaths = paths.Length;
 
             foreach (var path in paths)
             {
@@ -529,6 +549,12 @@ namespace GitCommitsWPF
                     UpdateOutput("扫描已手动停止");
                     return;
                 }
+                
+                pathIndex++;
+                // 更新搜索阶段的进度
+                int searchProgress = 20 + (int)((pathIndex / (double)totalPaths) * 20);
+                UpdateProgressBar(searchProgress);
+                UpdateOutput(string.Format("正在搜索路径 [{0}/{1}]: {2}", pathIndex, totalPaths, path));
                 
                 try
                 {
@@ -572,8 +598,19 @@ namespace GitCommitsWPF
 
             _repoCount = gitRepos.Count;
             UpdateOutput(string.Format("总共找到 {0} 个Git仓库", _repoCount));
+            
+            // 如果没有找到仓库，设置为较高进度并退出
+            if (_repoCount == 0)
+            {
+                UpdateProgressBar(90);
+                UpdateOutput("未找到任何Git仓库，扫描结束");
+                return;
+            }
+            
+            // 设置为40%进度，表示开始处理仓库
+            UpdateProgressBar(40);
 
-            // 处理每个Git仓库
+            // 处理每个Git仓库，分配40%-95%的进度
             _currentRepo = 0;
             DateTime? earliestRepoDate = null;
 
@@ -587,9 +624,10 @@ namespace GitCommitsWPF
                 }
                 
                 _currentRepo++;
-                int percentComplete = (int)Math.Round((_currentRepo / (double)_repoCount) * 100);
+                // 更新处理仓库阶段的进度
+                int percentComplete = 40 + (int)((_currentRepo / (double)_repoCount) * 55);
                 UpdateProgressBar(percentComplete);
-                UpdateOutput(string.Format("处理仓库 [{0}%]: {1}", percentComplete, repo.FullName));
+                UpdateOutput(string.Format("处理仓库 [{0}/{1}]: {2}", _currentRepo, _repoCount, repo.FullName));
 
                 try
                 {
@@ -801,6 +839,16 @@ namespace GitCommitsWPF
 
             // 输出结果数量
             UpdateOutput(string.Format("在指定时间范围内共找到 {0} 个提交", _allCommits.Count));
+
+            // 添加到最近使用的作者
+            if (!string.IsNullOrEmpty(author))
+            {
+                AddToRecentAuthors(author);
+            }
+
+            // 设置进度条到完成状态
+            UpdateProgressBar(100);
+            UpdateOutput("Git提交记录收集完成");
         }
 
         private void ShowResults()
@@ -2169,11 +2217,10 @@ namespace GitCommitsWPF
             selectWindow.ShowDialog();
         }
 
-        // 处理系统文件窗口选择复选框的勾选事件
+        // [该方法未使用，可以移除] 复选框的勾选事件在BrowseButton_Click方法中已处理
         private void ChooseSystemCheckBox_Checked(object sender, RoutedEventArgs e)
         {
-            // 可以在这里添加当复选框被勾选时需要执行的逻辑
-            // 目前不需要特殊处理，因为在BrowseButton_Click中已经处理了选择逻辑
+            // 此方法为空，不需要特殊处理，因为在BrowseButton_Click中已经处理了选择逻辑
         }
 
         // 处理获取本地git作者点击事件
@@ -2233,7 +2280,8 @@ namespace GitCommitsWPF
                 Dispatcher.Invoke(() =>
                 {
                     ProgressBar.Visibility = Visibility.Visible;
-                    ProgressBar.Value = 0;
+                    ProgressBar.Value = 10;  // 设置一个基础进度值，让用户知道程序开始运行
+                    UpdateOutput("正在初始化扫描过程...");
                 });
 
                 // 异步扫描所有路径
@@ -2241,13 +2289,43 @@ namespace GitCommitsWPF
                 {
                     int pathCount = paths.Count;
                     int currentPath = 0;
-
+                    int totalGitRepos = 0;
+                    int processedRepos = 0;
+                    
+                    // 第一阶段：计算所有路径下的Git仓库总数 (分配总进度的20%)
+                    foreach (var path in paths)
+                    {
+                        if (Directory.Exists(path))
+                        {
+                            UpdateOutput(string.Format("正在搜索路径: {0}", path));
+                            // 计算每个路径的搜索进度
+                            var repos = FindGitRepositories(path);
+                            totalGitRepos += repos.Count;
+                            
+                            // 更新进度，第一阶段分配10-30%的进度
+                            currentPath++;
+                            int searchProgress = 10 + (int)(20.0 * currentPath / pathCount);
+                            UpdateProgressBar(searchProgress);
+                        }
+                    }
+                    
+                    // 避免除以零错误
+                    if (totalGitRepos == 0)
+                    {
+                        totalGitRepos = 1;
+                        UpdateProgressBar(90);  // 如果没有仓库，进度直接到90%
+                    }
+                    
+                    UpdateOutput(string.Format("共找到 {0} 个Git仓库待扫描", totalGitRepos));
+                    // 扫描阶段起始进度为30%
+                    int startProgress = 30;
+                    
+                    // 重置当前路径计数器
+                    currentPath = 0;
                     foreach (var path in paths)
                     {
                         currentPath++;
-                        int percentComplete = (int)Math.Round((currentPath / (double)pathCount) * 100);
-                        UpdateProgressBar(percentComplete);
-
+                        
                         try
                         {
                             if (!Directory.Exists(path))
@@ -2256,7 +2334,7 @@ namespace GitCommitsWPF
                                 continue;
                             }
 
-                            UpdateOutput(string.Format("正在扫描路径 [{0}%]: {1}", percentComplete, path));
+                            UpdateOutput(string.Format("正在扫描路径 [{0}/{1}]: {2}", currentPath, pathCount, path));
 
                             // 搜索Git仓库
                             var gitRepos = FindGitRepositories(path);
@@ -2265,6 +2343,13 @@ namespace GitCommitsWPF
                             // 从每个Git仓库获取作者信息
                             foreach (var repo in gitRepos)
                             {
+                                processedRepos++;
+                                // 更新进度条，基于处理的仓库数量计算进度百分比
+                                // 剩余的70%进度分配给实际扫描阶段
+                                int percentComplete = startProgress + (int)Math.Round((processedRepos / (double)totalGitRepos) * 70);
+                                UpdateProgressBar(percentComplete);
+                                UpdateOutput(string.Format("扫描仓库 [{0}/{1}]: {2}", processedRepos, totalGitRepos, repo.FullName));
+                                
                                 ScanGitAuthors(repo, authors);
                             }
                         }
@@ -2273,6 +2358,9 @@ namespace GitCommitsWPF
                             UpdateOutput(string.Format("扫描路径时出错: {0}", ex.Message));
                         }
                     }
+                    
+                    // 扫描完成，设置进度为100%
+                    UpdateProgressBar(100);
                 });
 
                 // 隐藏进度条
@@ -2563,6 +2651,18 @@ namespace GitCommitsWPF
                     .ToList();
 
                 authors.AddRange(newAuthors);
+                
+                // 也添加到扫描作者列表
+                foreach (var author in newAuthors)
+                {
+                    if (!_scannedAuthors.Contains(author))
+                    {
+                        _scannedAuthors.Add(author);
+                    }
+                }
+                // 保存扫描到的作者
+                SaveScannedAuthors();
+                
                 UpdateOutput(string.Format("从仓库 '{0}' 找到 {1} 个作者", repo.Name, newAuthors.Count));
 
                 // 恢复当前目录
@@ -2809,9 +2909,9 @@ namespace GitCommitsWPF
             // 创建作者选择窗口
             var selectWindow = new Window
             {
-                Title = "选择最近使用的作者",
-                Width = 400,
-                Height = 300,
+                Title = "选择作者",
+                Width = 500,
+                Height = 400,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
                 ResizeMode = ResizeMode.NoResize
@@ -2821,13 +2921,92 @@ namespace GitCommitsWPF
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             
-            // 列表框，显示最近使用的作者
-            var listBox = new ListBox
+            // 创建Tab控件
+            var tabControl = new TabControl 
+            { 
+                Margin = new Thickness(10)
+            };
+            Grid.SetRow(tabControl, 0);
+            
+            // 第一个Tab：最近使用的作者
+            var recentTab = new TabItem
             {
-                Margin = new Thickness(10),
+                Header = "最近使用",
+                IsSelected = true
+            };
+            
+            // 最近使用的作者列表
+            var recentListBox = new ListBox
+            {
+                Margin = new Thickness(5),
                 ItemsSource = _recentAuthors
             };
-            Grid.SetRow(listBox, 0);
+            recentTab.Content = recentListBox;
+            
+            // 第二个Tab：扫描到的作者
+            var scannedTab = new TabItem
+            {
+                Header = "扫描记录"
+            };
+            
+            // 扫描到的作者列表及搜索框
+            var scannedPanel = new DockPanel();
+            var searchPanel = new StackPanel 
+            { 
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(5)
+            };
+            DockPanel.SetDock(searchPanel, Dock.Top);
+            
+            var searchLabel = new TextBlock
+            {
+                Text = "搜索:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 5, 0)
+            };
+            
+            var searchBox = new System.Windows.Controls.TextBox
+            {
+                Width = 300,
+                Margin = new Thickness(5, 0, 0, 0)
+            };
+            
+            searchPanel.Children.Add(searchLabel);
+            searchPanel.Children.Add(searchBox);
+            scannedPanel.Children.Add(searchPanel);
+            
+            // 扫描到的作者列表
+            var scannedListBox = new ListBox
+            {
+                Margin = new Thickness(5),
+                ItemsSource = _scannedAuthors.OrderBy(a => a).ToList()
+            };
+            DockPanel.SetDock(scannedListBox, Dock.Top);
+            scannedPanel.Children.Add(scannedListBox);
+            
+            // 实现搜索功能
+            searchBox.TextChanged += (s, evt) =>
+            {
+                string filter = searchBox.Text.ToLower();
+                if (string.IsNullOrEmpty(filter))
+                {
+                    scannedListBox.ItemsSource = _scannedAuthors.OrderBy(a => a).ToList();
+                }
+                else
+                {
+                    scannedListBox.ItemsSource = _scannedAuthors
+                        .Where(a => a.ToLower().Contains(filter))
+                        .OrderBy(a => a)
+                        .ToList();
+                }
+            };
+            
+            scannedTab.Content = scannedPanel;
+            
+            // 添加Tab到TabControl
+            tabControl.Items.Add(recentTab);
+            tabControl.Items.Add(scannedTab);
+            grid.Children.Add(tabControl);
             
             // 按钮面板
             var buttonPanel = new StackPanel
@@ -2849,9 +3028,26 @@ namespace GitCommitsWPF
             
             selectButton.Click += (s, evt) =>
             {
-                if (listBox.SelectedItem is string selectedAuthor)
+                ListBox selectedListBox = null;
+                if (tabControl.SelectedItem == recentTab)
+                {
+                    selectedListBox = recentListBox;
+                }
+                else
+                {
+                    selectedListBox = scannedListBox;
+                }
+                
+                if (selectedListBox != null && selectedListBox.SelectedItem is string selectedAuthor)
                 {
                     AuthorTextBox.Text = selectedAuthor;
+                    
+                    // 如果选择的是扫描作者，添加到最近作者列表
+                    if (tabControl.SelectedItem == scannedTab)
+                    {
+                        AddToRecentAuthors(selectedAuthor);
+                    }
+                    
                     selectWindow.Close();
                     
                     // 应用筛选
@@ -2874,10 +3070,24 @@ namespace GitCommitsWPF
             
             clearButton.Click += (s, evt) =>
             {
-                _recentAuthors.Clear();
-                SaveRecentAuthors();
-                selectWindow.Close();
-                ShowCustomMessageBox("信息", "已清除最近作者记录。", false);
+                if (tabControl.SelectedItem == recentTab)
+                {
+                    // 清除最近作者
+                    _recentAuthors.Clear();
+                    SaveRecentAuthors();
+                    recentListBox.ItemsSource = null;
+                    recentListBox.Items.Clear();
+                    ShowCustomMessageBox("信息", "已清除最近作者记录。", false);
+                }
+                else
+                {
+                    // 清除扫描作者
+                    _scannedAuthors.Clear();
+                    SaveScannedAuthors();
+                    scannedListBox.ItemsSource = null;
+                    scannedListBox.Items.Clear();
+                    ShowCustomMessageBox("信息", "已清除扫描作者记录。", false);
+                }
             };
             
             // 取消按钮
@@ -2898,7 +3108,6 @@ namespace GitCommitsWPF
             buttonPanel.Children.Add(clearButton);
             buttonPanel.Children.Add(cancelButton);
             
-            grid.Children.Add(listBox);
             grid.Children.Add(buttonPanel);
             
             selectWindow.Content = grid;
@@ -2961,6 +3170,43 @@ namespace GitCommitsWPF
 
             // 保存更新后的列表
             SaveRecentAuthors();
+        }
+
+        // 加载扫描到的作者
+        private void LoadScannedAuthors()
+        {
+            try
+            {
+                string appDataPath = FileUtility.GetAppDataDirectory();
+                string scannedAuthorsFile = Path.Combine(appDataPath, "ScannedAuthors.txt");
+                
+                if (File.Exists(scannedAuthorsFile))
+                {
+                    _scannedAuthors = FileUtility.ReadLinesFromFile(scannedAuthorsFile);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 忽略错误，使用空的扫描作者列表
+                _scannedAuthors = new List<string>();
+                Debug.WriteLine("加载扫描作者时出错: " + ex.Message);
+            }
+        }
+
+        // 保存扫描到的作者
+        private void SaveScannedAuthors()
+        {
+            try
+            {
+                string appDataPath = FileUtility.GetAppDataDirectory();
+                string scannedAuthorsFile = Path.Combine(appDataPath, "ScannedAuthors.txt");
+                FileUtility.SaveLinesToFile(scannedAuthorsFile, _scannedAuthors);
+            }
+            catch (Exception ex)
+            {
+                // 忽略错误
+                Debug.WriteLine("保存扫描作者时出错: " + ex.Message);
+            }
         }
   }
 }
