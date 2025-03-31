@@ -2,3 +2,8 @@
 .idea/
 .vs/
 .vscode/
+obj/
+bin/
+*.user
+*.suo
+*.cache
