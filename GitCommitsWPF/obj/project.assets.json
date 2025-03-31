@@ -73,11 +73,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\bigse\\Desktop\\GitExe\\GitCommitsWPF\\GitCommitsWPF\\GitCommitsWPF.csproj",
+      "projectUniqueName": "D:\\Project\\GitCommitsWPF\\GitCommitsWPF\\GitCommitsWPF.csproj",
       "projectName": "GitCommitsWPF",
-      "projectPath": "C:\\Users\\bigse\\Desktop\\GitExe\\GitCommitsWPF\\GitCommitsWPF\\GitCommitsWPF.csproj",
+      "projectPath": "D:\\Project\\GitCommitsWPF\\GitCommitsWPF\\GitCommitsWPF.csproj",
       "packagesPath": "C:\\Users\\bigse\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\bigse\\Desktop\\GitExe\\GitCommitsWPF\\GitCommitsWPF\\obj\\",
+      "outputPath": "D:\\Project\\GitCommitsWPF\\GitCommitsWPF\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
         "D:\\Microsoft Visual Studio\\Shared\\NuGetPackages"

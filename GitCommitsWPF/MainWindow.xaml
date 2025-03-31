@@ -108,13 +108,14 @@
 
                                 <TextBlock Grid.Row="0" Grid.Column="0" Text="作者名称：" VerticalAlignment="Center"/>
                                 <TextBox Grid.Row="0" Grid.Column="1" x:Name="AuthorTextBox" ToolTip="输入作者名称进行筛选" Margin="0,5,215,5"/>
-                                <Button Grid.Row="0" Grid.Column="1" Content="选择本地git作者" Margin="220,5,83,5" Click="LocationAuthor_Click" />
+                                <Button Grid.Row="0" Grid.Column="1" Content="扫描Git作者" Margin="296,5,7,5" Click="LocationAuthor_Click" />
                                 <TextBlock Grid.Row="1" Grid.Column="0" Text="作者过滤：" VerticalAlignment="Center"/>
                                 <TextBox Grid.Row="1" Grid.Column="1" x:Name="AuthorFilterTextBox" ToolTip="输入作者过滤条件，多个条件用逗号分隔"/>
 
                                 <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,5" TextWrapping="Wrap" Foreground="#666">
                                     作者名称对应git author，作者过滤支持多个条件，用逗号分隔。
                                 </TextBlock>
+                                <Button Grid.Column="1" Content="最近使用" HorizontalAlignment="Left" Margin="221,0,0,0" VerticalAlignment="Center" Click="LastAuthor_Click"/>
 
                             </Grid>
                         </GroupBox>
@@ -318,13 +319,13 @@
         </Grid>
 
         <!-- 底部按钮区域 -->
-        <Grid Grid.Row="2" Margin="10">
+        <Grid Grid.Row="2" Margin="13,10,7,10">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
@@ -332,14 +333,21 @@
             <!-- 进度条移到上方，占满整行 -->
             <ProgressBar Grid.Row="0" Grid.ColumnSpan="3" x:Name="ProgressBar" Height="20" Margin="0,0,0,10" Visibility="Collapsed"/>
 
-            <!-- 按钮区域移到下方 -->
-            <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal">
+            <!-- 将按钮区域划分为左右两个部分 -->
+            <!-- 左侧按钮组 -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center">
                 <Button Content="复制日志" Margin="0,0,5,0" Width="70" Background="#FF637E94" Click="CopyLog_Click" />
                 <Button Content="保存日志" Margin="5,0,5,0" Width="70" Click="SaveLog_Click"/>
                 <Button Content="清除日志" Margin="5,0,0,0" Width="70" Background="#FFF68318" Click="CleanLog_Click" />
             </StackPanel>
-            <Button Grid.Row="1" Grid.Column="1" x:Name="StartButton" Content="开始查询" Width="100" Margin="10,0,5,0" Click="StartButton_Click"/>
-            <Button Grid.Row="1" Grid.Column="2" x:Name="SaveButton" Content="保存结果" Width="100" Click="SaveButton_Click" IsEnabled="False" Margin="5,0,0,0"/>
+
+            <!-- 右侧按钮组 -->
+            <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Left" Margin="622,0,0,0" Width="222">
+                <Button x:Name="StartButton" Content="开始查询" Width="70" Margin="0,0,5,0" Click="StartButton_Click"/>
+                <Button Content="停止查询" Width="70" Margin="0,0,5,0" Background="#FFF39721" Click="StopButton_Click"/>
+                <Button x:Name="SaveButton" Content="保存结果" Width="70" Margin="0,0,5,0" Click="SaveButton_Click" IsEnabled="False"/>
+            </StackPanel>
         </Grid>
+
     </Grid>
 </Window> 
