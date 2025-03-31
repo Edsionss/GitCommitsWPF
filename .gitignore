@@ -1,7 +1,4 @@
 
-.vscode
-.idea
-.DS_Store
-.env
-.env.local
-.vs
+.idea/
+.vs/
+.vscode/
