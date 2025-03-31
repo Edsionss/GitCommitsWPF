@@ -1,3 +1,0 @@
-C:\Users\bigse\Desktop\GitExe\build\GitCommitsWPF.exe
-C:\Users\bigse\Desktop\GitExe\build\GitCommitsWPF.exe.config
-C:\Users\bigse\Desktop\GitExe\build\Newtonsoft.Json.dll

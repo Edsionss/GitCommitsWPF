@@ -1,3 +1,0 @@
-C:\Users\bigse\Desktop\GitExe\GitCommitsWPF\GitCommitsWPF\bin\Release\net472\win-x86\publish\GitCommitsWPF.exe
-C:\Users\bigse\Desktop\GitExe\GitCommitsWPF\GitCommitsWPF\bin\Release\net472\win-x86\publish\GitCommitsWPF.exe.config
-C:\Users\bigse\Desktop\GitExe\GitCommitsWPF\GitCommitsWPF\bin\Release\net472\win-x86\publish\Newtonsoft.Json.dll
