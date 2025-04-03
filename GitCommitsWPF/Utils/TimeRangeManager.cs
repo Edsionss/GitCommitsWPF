@@ -55,10 +55,47 @@ namespace GitCommitsWPF.Utils
       if (selectedItem != null)
       {
         var timeRange = selectedItem.Tag?.ToString();
-        // 仅在选择"custom"时启用日期选择器
-        bool isCustom = timeRange == "custom";
-        _startDatePicker.IsEnabled = isCustom;
-        _endDatePicker.IsEnabled = isCustom;
+
+        // 更新日期选择器的状态和值
+        switch (timeRange)
+        {
+          case "day":
+            _startDatePicker.SelectedDate = DateTime.Today;
+            _endDatePicker.SelectedDate = DateTime.Today;
+            _startDatePicker.IsEnabled = false;
+            _endDatePicker.IsEnabled = false;
+            break;
+          case "week":
+            _startDatePicker.SelectedDate = DateTime.Today.AddDays(-7);
+            _endDatePicker.SelectedDate = DateTime.Today;
+            _startDatePicker.IsEnabled = false;
+            _endDatePicker.IsEnabled = false;
+            break;
+          case "month":
+            _startDatePicker.SelectedDate = DateTime.Today.AddMonths(-1);
+            _endDatePicker.SelectedDate = DateTime.Today;
+            _startDatePicker.IsEnabled = false;
+            _endDatePicker.IsEnabled = false;
+            break;
+          case "year":
+            _startDatePicker.SelectedDate = DateTime.Today.AddYears(-1);
+            _endDatePicker.SelectedDate = DateTime.Today;
+            _startDatePicker.IsEnabled = false;
+            _endDatePicker.IsEnabled = false;
+            break;
+          case "custom":
+            // 对于自定义范围，保持已选日期并启用控件
+            _startDatePicker.IsEnabled = true;
+            _endDatePicker.IsEnabled = true;
+            break;
+          default: // "all"
+            // 设置为较早的日期，实际不会使用
+            _startDatePicker.SelectedDate = null;
+            _endDatePicker.SelectedDate = DateTime.Today;
+            _startDatePicker.IsEnabled = false;
+            _endDatePicker.IsEnabled = false;
+            break;
+        }
       }
     }
 
@@ -106,16 +143,28 @@ namespace GitCommitsWPF.Utils
       switch (timeRange)
       {
         case "day":
-          since = DateTime.Today.ToString("yyyy-MM-dd");
+          // 使用指定的startDate，如果为null则使用当天
+          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.ToString("yyyy-MM-dd");
+          // 使用指定的endDate，如果为null则使用当天
+          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
           break;
         case "week":
-          since = DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd");
+          // 使用指定的startDate，如果为null则使用7天前
+          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd");
+          // 使用指定的endDate，如果为null则使用当天
+          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
           break;
         case "month":
-          since = DateTime.Today.AddMonths(-1).ToString("yyyy-MM-dd");
+          // 使用指定的startDate，如果为null则使用1个月前
+          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.AddMonths(-1).ToString("yyyy-MM-dd");
+          // 使用指定的endDate，如果为null则使用当天
+          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
           break;
         case "year":
-          since = DateTime.Today.AddYears(-1).ToString("yyyy-MM-dd");
+          // 使用指定的startDate，如果为null则使用1年前
+          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.AddYears(-1).ToString("yyyy-MM-dd");
+          // 使用指定的endDate，如果为null则使用当天
+          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
           break;
         case "custom":
           if (startDate.HasValue)
