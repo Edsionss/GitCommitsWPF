@@ -530,6 +530,12 @@ namespace GitCommitsWPF.Utils
     /// <returns>选择的文件路径，如取消则返回null</returns>
     public string ShowSaveFileDialog(string defaultFileName = "Git提交记录")
     {
+      // 如果是简单的默认文件名，自动添加时间戳
+      if (defaultFileName == "Git提交记录" || !defaultFileName.Contains("_"))
+      {
+        defaultFileName = FileUtility.GenerateDefaultFileName(defaultFileName.TrimEnd('.', 't', 'x', 't'));
+      }
+
       SaveFileDialog saveDialog = new SaveFileDialog
       {
         Title = "保存提交记录",

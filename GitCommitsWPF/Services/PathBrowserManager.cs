@@ -258,8 +258,8 @@ namespace GitCommitsWPF.Services
     /// </summary>
     public void SelectOutputPath(TextBox outputPathTextBox)
     {
-      // 创建默认文件名：Git提交记录_年月日.csv
-      string defaultFileName = string.Format("Git提交记录_{0}.txt", DateTime.Now.ToString("yyyyMMdd"));
+      // 使用FileUtility生成默认文件名
+      string defaultFileName = FileUtility.GenerateDefaultFileName();
       var dialog = new SaveFileDialog
       {
         Title = "保存结果",
@@ -333,18 +333,27 @@ namespace GitCommitsWPF.Services
           // 验证文件路径是否存在
           if (File.Exists(selectedPath))
           {
-            // 如果存在，则将路径的文件名中的日期替换成当前日期
-            string newPath = Path.Combine(Path.GetDirectoryName(selectedPath), "GIT提交记录查询结果" + DateTime.Now.ToString("yyyyMMdd") + Path.GetExtension(selectedPath));
-            // OutputPathTextBox.Text = Path.Combine(Path.GetDirectoryName(selectedPath), DateTime.Now.ToString("yyyyMMdd") + Path.GetExtension(selectedPath));
+            // 生成新的文件名，使用原始文件的目录和扩展名
+            string newPath = Path.Combine(
+              Path.GetDirectoryName(selectedPath),
+              "GIT提交记录查询结果" + DateTime.Now.ToString("yyyyMMddHHmmss") + Path.GetExtension(selectedPath));
+
             if (File.Exists(newPath))
             {
-              _dialogManager.ShowCustomMessageBox("提示", "文件已存在，请选择其他保存位置。", false);
-              return;
+              // 询问用户是否覆盖已有文件
+              bool overwrite = _dialogManager.ShowCustomConfirmDialog(
+                "文件已存在",
+                $"文件 {Path.GetFileName(newPath)} 已存在，是否覆盖？");
+
+              if (!overwrite)
+              {
+                // 用户选择不覆盖，返回
+                return;
+              }
             }
-            else
-            {
-              outputPathTextBox.Text = newPath;
-            }
+
+            // 更新输出路径文本框
+            outputPathTextBox.Text = newPath;
 
             // 确保将选择的路径添加到最近保存位置并保存
             _locationManager.AddToSaveLocations(selectedPath);

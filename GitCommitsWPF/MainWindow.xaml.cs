@@ -380,8 +380,8 @@ namespace GitCommitsWPF
     {
       if (string.IsNullOrEmpty(OutputPathTextBox.Text))
       {
-        // 创建默认文件名：Git提交记录_年月日.csv
-        string defaultFileName = $"Git提交记录_{DateTime.Now.ToString("yyyyMMdd")}.txt";
+        // 使用FileUtility生成默认文件名
+        string defaultFileName = FileUtility.GenerateDefaultFileName("Git提交记录", ".txt");
 
         string outputPath = _exportManager.ShowSaveFileDialog(defaultFileName);
         if (!string.IsNullOrEmpty(outputPath))
@@ -397,6 +397,22 @@ namespace GitCommitsWPF
       try
       {
         string filePath = OutputPathTextBox.Text;
+
+        // 检查文件是否已存在
+        if (System.IO.File.Exists(filePath))
+        {
+          // 询问用户是否覆盖已有文件
+          bool overwrite = _dialogManager.ShowCustomConfirmDialog(
+            "文件已存在",
+            $"文件 {System.IO.Path.GetFileName(filePath)} 已存在，是否覆盖？");
+
+          if (!overwrite)
+          {
+            // 用户选择不覆盖，返回
+            return;
+          }
+        }
+
         SaveResults(filePath);
 
         // 添加到最近保存位置
