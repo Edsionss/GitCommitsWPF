@@ -111,35 +111,35 @@ namespace GitCommitsWPF.Services
         _outputManager.AddSeparator();
 
         // 输出扫描配置信息
-        _outputManager.UpdateOutput("===== 开始Git提交扫描 =====");
-        _outputManager.UpdateOutput("扫描配置:");
+        _outputManager.OutputHighlight("===== 开始Git提交扫描 =====");
+        _outputManager.OutputHighlight("扫描配置:");
 
         // 输出路径信息
         var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
-        _outputManager.UpdateOutput($"- 扫描路径数量: {paths.Count}");
+        _outputManager.OutputInfo($"- 扫描路径数量: {paths.Count}");
 
         // 输出时间范围信息
         string timeRangeDesc = GetTimeRangeDescription(timeRange, startDate, endDate);
-        _outputManager.UpdateOutput($"- 时间范围: {timeRangeDesc}");
+        _outputManager.OutputInfo($"- 时间范围: {timeRangeDesc}");
 
         // 输出作者信息
-        _outputManager.UpdateOutput($"- 作者: {(string.IsNullOrEmpty(author) ? "所有作者" : author)}");
+        _outputManager.OutputInfo($"- 作者: {(string.IsNullOrEmpty(author) ? "所有作者" : author)}");
         if (!string.IsNullOrEmpty(authorFilter))
         {
-          _outputManager.UpdateOutput($"- 作者过滤: {authorFilter}");
+          _outputManager.OutputInfo($"- 作者过滤: {authorFilter}");
         }
 
         // 输出其他配置
-        _outputManager.UpdateOutput($"- 验证Git路径: {(verifyGitPaths ? "是" : "否")}");
-        _outputManager.UpdateOutput($"- 启用统计: {(getEnableStats() ? "是" : "否")}");
+        _outputManager.OutputInfo($"- 验证Git路径: {(verifyGitPaths ? "是" : "否")}");
+        _outputManager.OutputInfo($"- 启用统计: {(getEnableStats() ? "是" : "否")}");
         if (getEnableStats())
         {
-          _outputManager.UpdateOutput($"  - 按作者统计: {(getStatsByAuthor() ? "是" : "否")}");
-          _outputManager.UpdateOutput($"  - 按仓库统计: {(getStatsByRepo() ? "是" : "否")}");
-          _outputManager.UpdateOutput($"  - 按日期统计: {(getStatsByDate() ? "是" : "否")}");
+          _outputManager.OutputInfo($"  - 按作者统计: {(getStatsByAuthor() ? "是" : "否")}");
+          _outputManager.OutputInfo($"  - 按仓库统计: {(getStatsByRepo() ? "是" : "否")}");
+          _outputManager.OutputInfo($"  - 按日期统计: {(getStatsByDate() ? "是" : "否")}");
         }
 
-        _outputManager.UpdateOutput("===== 开始执行扫描 =====");
+        _outputManager.OutputHighlight("===== 开始执行扫描 =====");
 
         // 异步执行查询
         await CollectGitCommits(
@@ -156,7 +156,7 @@ namespace GitCommitsWPF.Services
         string durationText = FormatDuration(duration);
 
         // 输出扫描完成和用时信息
-        _outputManager.UpdateOutput($"===== 扫描完成，用时: {durationText} =====");
+        _outputManager.OutputSuccess($"===== 扫描完成，用时: {durationText} =====");
 
         // 查询完成后，显示结果并更新UI
         ShowResults(
@@ -174,7 +174,7 @@ namespace GitCommitsWPF.Services
         setSaveButtonEnabled();
         int commitCount = _allCommits.Count;
         string commitText = commitCount == 1 ? "条提交记录" : "条提交记录";
-        _outputManager.UpdateOutput(string.Format("===== 扫描完成，找到 {0} {1}，总用时: {2} =====，点击结果页签查看",
+        _outputManager.OutputSuccess(string.Format("===== 扫描完成，找到 {0} {1}，总用时: {2} =====，点击结果页签查看",
             commitCount, commitText, durationText));
 
         return true;
@@ -182,6 +182,7 @@ namespace GitCommitsWPF.Services
       catch (Exception ex)
       {
         _dialogManager.ShowCustomMessageBox("错误", string.Format("执行过程中发生错误：{0}", ex.Message), false);
+        _outputManager.OutputError($"执行过程中发生错误: {ex.Message}");
         return false;
       }
       finally

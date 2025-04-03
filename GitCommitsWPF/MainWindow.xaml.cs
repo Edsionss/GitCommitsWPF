@@ -714,13 +714,13 @@ namespace GitCommitsWPF
     // 复制日志
     private void CopyLog_Click(object sender, RoutedEventArgs e)
     {
-      _logOperationsManager.CopyLog(ResultTextBox.Text);
+      _logOperationsManager.CopyLog(ResultTextBox);
     }
 
     // 保存日志
     private void SaveLog_Click(object sender, RoutedEventArgs e)
     {
-      _logOperationsManager.SaveLog(ResultTextBox.Text);
+      _logOperationsManager.SaveLog(ResultTextBox);
     }
 
     // 清空日志

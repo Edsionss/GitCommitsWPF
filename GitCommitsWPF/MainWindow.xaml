@@ -338,8 +338,14 @@
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Text="日志：" FontWeight="Bold"/>
-            <TextBox Grid.Row="1" x:Name="ResultTextBox" IsReadOnly="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" 
-                     FontFamily="Consolas" Background="#f5f5f5" BorderThickness="1" BorderBrush="#ddd"/>
+            <RichTextBox Grid.Row="1" x:Name="ResultTextBox" IsReadOnly="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" 
+                     FontFamily="Consolas" Background="#f5f5f5" BorderThickness="1" BorderBrush="#ddd">
+                <RichTextBox.Resources>
+                    <Style TargetType="{x:Type Paragraph}">
+                        <Setter Property="Margin" Value="0"/>
+                    </Style>
+                </RichTextBox.Resources>
+            </RichTextBox>
         </Grid>
 
         <!-- 底部按钮区域 -->
