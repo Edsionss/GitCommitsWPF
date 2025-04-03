@@ -63,6 +63,9 @@ namespace GitCommitsWPF
     // StatisticsManager实例，用于管理统计功能
     private StatisticsManager _statisticsManager = new StatisticsManager();
 
+    // SearchFilterManager实例，用于管理搜索过滤功能
+    private SearchFilterManager _searchFilterManager = new SearchFilterManager();
+
     public MainWindow()
     {
       InitializeComponent();
@@ -1230,7 +1233,6 @@ namespace GitCommitsWPF
       buttonPanel.Children.Add(addButton);
       buttonPanel.Children.Add(clearButton);
       buttonPanel.Children.Add(cancelButton);
-
       grid.Children.Add(listBox);
       grid.Children.Add(buttonPanel);
 
@@ -1388,21 +1390,14 @@ namespace GitCommitsWPF
         return;
       }
 
-      // 应用筛选
-      _filteredCommits = _allCommits.Where(commit =>
-          (commit.Repository != null && commit.Repository.ToLower().Contains(filterText)) ||
-          (commit.RepoFolder != null && commit.RepoFolder.ToLower().Contains(filterText)) ||
-          (commit.Author != null && commit.Author.ToLower().Contains(filterText)) ||
-          (commit.Message != null && commit.Message.ToLower().Contains(filterText)) ||
-          (commit.Date != null && commit.Date.ToLower().Contains(filterText)) ||
-          (commit.CommitId != null && commit.CommitId.ToLower().Contains(filterText))
-      ).ToList();
+      // 使用SearchFilterManager应用过滤
+      _filteredCommits = _searchFilterManager.ApplyFilter(_allCommits, filterText);
 
       // 更新UI
       CommitsDataGrid.ItemsSource = _filteredCommits;
 
       // 显示筛选结果
-      ShowCustomMessageBox("筛选结果", string.Format("找到 {0} 条匹配记录", _filteredCommits.Count), false);
+      ShowCustomMessageBox("筛选结果", _searchFilterManager.GetFilterStats(_filteredCommits), false);
     }
 
     // 显示自定义消息窗口，如果是保存成功消息，则提供打开文件选项
@@ -1551,6 +1546,7 @@ namespace GitCommitsWPF
 
       buttonPanel.Children.Add(addButton);
       buttonPanel.Children.Add(clearButton);
+      buttonPanel.Children.Add(cancelButton);
       grid.Children.Add(buttonPanel);
 
       selectWindow.Content = grid;
