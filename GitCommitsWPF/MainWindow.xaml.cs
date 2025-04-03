@@ -72,6 +72,9 @@ namespace GitCommitsWPF
     // DataGridManager实例，用于管理DataGrid相关功能
     private DataGridManager _dataGridManager;
 
+    // QueryExecutionManager实例，用于管理查询执行和结果处理
+    private QueryExecutionManager _queryExecutionManager;
+
     public MainWindow()
     {
       InitializeComponent();
@@ -102,6 +105,15 @@ namespace GitCommitsWPF
       // 初始化DataGrid管理器
       _dataGridManager = new DataGridManager(_dialogManager);
       _dataGridManager.Initialize(CommitsDataGrid, ShowCustomMessageBox, () => FormatTextBox.Text);
+
+      // 初始化查询执行管理器
+      _queryExecutionManager = new QueryExecutionManager(
+        _outputManager,
+        _gitOperationsManager,
+        _dialogManager,
+        _statisticsManager,
+        _formattingManager,
+        _dataGridManager);
 
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
@@ -288,50 +300,68 @@ namespace GitCommitsWPF
     // 开始按钮点击事件处理
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
-      // 检查路径是否为空
-      if (string.IsNullOrWhiteSpace(PathsTextBox.Text))
-      {
-        ShowCustomMessageBox("错误", "请先输入要扫描的Git仓库路径", false);
-        return;
-      }
+      // 设置执行状态并获取所需参数
+      string pathsText = PathsTextBox.Text;
+      string timeRange = ((ComboBoxItem)TimeRangeComboBox.SelectedItem).Tag.ToString();
+      DateTime? startDate = StartDatePicker.SelectedDate;
+      DateTime? endDate = EndDatePicker.SelectedDate;
+      string author = AuthorTextBox.Text;
+      string authorFilter = AuthorFilterTextBox.Text;
+      bool verifyGitPaths = VerifyGitPathsCheckBox.IsChecked == true;
 
-      // 清空现有的结果
-      _allCommits.Clear();
-      _filteredCommits.Clear();
-      _isRunning = true;
+      // 使用QueryExecutionManager执行查询
+      await _queryExecutionManager.ExecuteQuery(
+        pathsText,
+        timeRange,
+        startDate,
+        endDate,
+        author,
+        authorFilter,
+        verifyGitPaths,
+        // 获取选择的字段
+        (repository, repoPath, repoFolder, commitId, author1, date, message) =>
+          _formattingManager.GetSelectedFields(
+            repository,
+            repoPath,
+            repoFolder,
+            commitId,
+            author1,
+            date,
+            message),
+        // 获取格式文本
+        () => FormatTextBox.Text,
+        // 获取是否显示重复的仓库名
+        () => ShowRepeatedRepoNamesCheckBox.IsChecked == true,
+        // 获取是否启用统计
+        () => EnableStatsCheckBox.IsChecked == true,
+        // 获取按作者统计
+        () => StatsByAuthorCheckBox.IsChecked == true,
+        // 获取按仓库统计
+        () => StatsByRepoCheckBox.IsChecked == true,
+        // 获取按日期统计
+        () => StatsByDateCheckBox.IsChecked == true,
+        // 更新格式化结果文本框
+        (textBox) =>
+        {
+          var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
+          if (formattedResultTextBox != null)
+          {
+            formattedResultTextBox.Text = textBox.Text;
+          }
+        },
+        // 启用开始按钮
+        () => StartButton.IsEnabled = false,
+        // 启用停止按钮
+        () => StopButton.IsEnabled = true,
+        // 启用保存按钮
+        () => SaveButton.IsEnabled = true,
+        // 清空搜索框
+        () => SearchFilterTextBox.Clear());
 
-      // 禁用开始按钮，启用停止按钮
-      StartButton.IsEnabled = false;
-      StopButton.IsEnabled = true;
-
-      try
-      {
-        // 先添加一个分隔线
-        _outputManager.AddSeparator();
-
-        // 异步执行查询
-        await CollectGitCommits();
-
-        // 查询完成后，显示结果并更新UI
-        ShowResults();
-
-        // 更新完成消息
-        SaveButton.IsEnabled = true;
-        int commitCount = _allCommits.Count;
-        string commitText = commitCount == 1 ? "条提交记录" : "条提交记录";
-        UpdateOutput(string.Format("===== 扫描完成，找到 {0} {1} =====，点击结果页签查看", commitCount, commitText));
-      }
-      catch (Exception ex)
-      {
-        ShowCustomMessageBox("错误", string.Format("执行过程中发生错误：{0}", ex.Message), false);
-      }
-      finally
-      {
-        _isRunning = false;
-        StartButton.IsEnabled = true;
-        StopButton.IsEnabled = false;
-        _outputManager.HideProgressBar();
-      }
+      // 查询完成后，将查询结果同步到字段
+      _allCommits = _queryExecutionManager.AllCommits;
+      _filteredCommits = _queryExecutionManager.FilteredCommits;
+      _isRunning = _queryExecutionManager.IsRunning;
     }
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -403,7 +433,11 @@ namespace GitCommitsWPF
 
         // 获取统计信息
         var statsBuilder = new StringBuilder();
-        GenerateStats(statsBuilder);
+        _queryExecutionManager.GenerateStats(
+            statsBuilder,
+            StatsByAuthorCheckBox.IsChecked == true,
+            StatsByRepoCheckBox.IsChecked == true,
+            StatsByDateCheckBox.IsChecked == true);
         string statsOutput = statsBuilder.ToString();
 
         // 获取用户自定义格式模板
@@ -443,7 +477,11 @@ namespace GitCommitsWPF
 
         // 获取统计信息
         var statsBuilder = new StringBuilder();
-        GenerateStats(statsBuilder);
+        _queryExecutionManager.GenerateStats(
+            statsBuilder,
+            StatsByAuthorCheckBox.IsChecked == true,
+            StatsByRepoCheckBox.IsChecked == true,
+            StatsByDateCheckBox.IsChecked == true);
         string statsOutput = statsBuilder.ToString();
 
         // 获取用户自定义格式模板
@@ -544,517 +582,6 @@ namespace GitCommitsWPF
     private void ShowCopySuccessMessageBox(string title, string message)
     {
       _dialogManager.ShowCopySuccessMessageBox(title, message);
-    }
-
-    private async Task CollectGitCommits()
-    {
-      // 获取路径列表（从UI线程读取文本）
-      string pathsText = "";
-      bool verifyGitPaths = false;
-      Dispatcher.Invoke(() =>
-      {
-        pathsText = PathsTextBox.Text;
-        verifyGitPaths = VerifyGitPathsCheckBox.IsChecked == true;
-      });
-      var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
-
-      // 计算日期范围
-      string since = "";
-      string until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd"); // 设置到明天来包含今天的提交
-
-      var timeRange = "";
-      Dispatcher.Invoke(() =>
-      {
-        timeRange = ((ComboBoxItem)TimeRangeComboBox.SelectedItem).Tag.ToString();
-      });
-
-      switch (timeRange)
-      {
-        case "day":
-          since = DateTime.Today.ToString("yyyy-MM-dd");
-          break;
-        case "week":
-          // 找到本周的星期一
-          var startOfWeek = DateTime.Today.AddDays(-(int)DateTime.Today.DayOfWeek + 1);
-          if (startOfWeek.DayOfWeek == DayOfWeek.Sunday) // 如果是周日，回退到上周一
-            startOfWeek = startOfWeek.AddDays(-6);
-          since = startOfWeek.ToString("yyyy-MM-dd");
-          break;
-        case "month":
-          // 本月第一天
-          since = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1).ToString("yyyy-MM-dd");
-          break;
-        case "custom":
-          DateTime? startDate = null;
-          DateTime? endDate = null;
-          Dispatcher.Invoke(() =>
-          {
-            startDate = StartDatePicker.SelectedDate;
-            endDate = EndDatePicker.SelectedDate;
-            if (startDate.HasValue && endDate.HasValue)
-            {
-              since = startDate.Value.ToString("yyyy-MM-dd");
-              // 设置结束日期为第二天，以包含结束当天的提交
-              until = endDate.Value.AddDays(1).ToString("yyyy-MM-dd");
-            }
-          });
-          break;
-        case "all":
-          // 不设置since，从仓库创建开始
-          since = "";
-          break;
-      }
-
-      // 获取作者和作者过滤条件
-      string author = "";
-      string authorFilter = "";
-      Dispatcher.Invoke(() =>
-      {
-        author = AuthorTextBox.Text;
-        authorFilter = AuthorFilterTextBox.Text;
-      });
-
-      // 使用GitOperationsManager异步收集Git提交
-      _allCommits = await _gitOperationsManager.CollectGitCommitsAsync(paths, since, until, author, authorFilter, verifyGitPaths);
-    }
-
-    // 删除FindGitRepositories方法，使用GitOperationsManager替代
-    private List<DirectoryInfo> FindGitRepositories(string path)
-    {
-      try
-      {
-        if (!Directory.Exists(path))
-        {
-          UpdateOutput(string.Format("路径不存在: {0}", path));
-          return new List<DirectoryInfo>();
-        }
-
-        // 搜索包含.git目录的文件夹
-        var gitDirs = new DirectoryInfo(path).GetDirectories(".git", SearchOption.AllDirectories);
-
-        // 返回包含.git目录的父目录（即Git仓库根目录）
-        var gitRepos = gitDirs.Select(gitDir => gitDir.Parent)
-            .Where(parent => parent != null)
-            .ToList();
-
-        UpdateOutput(string.Format("在路径 '{0}' 下找到 {1} 个Git仓库", path, gitRepos.Count));
-        return gitRepos;
-      }
-      catch (Exception ex)
-      {
-        UpdateOutput(string.Format("搜索Git仓库时出错: {0}", ex.Message));
-        return new List<DirectoryInfo>();
-      }
-    }
-
-    private void ShowResults()
-    {
-      // 检查是否已手动停止
-      if (!_isRunning)
-      {
-        UpdateOutput("显示结果过程已手动停止");
-        return;
-      }
-
-      // 筛选后得到的提交记录
-      _filteredCommits = new List<CommitInfo>(_allCommits);
-
-      if (_allCommits.Count == 0)
-      {
-        Dispatcher.Invoke(() =>
-        {
-          ResultTextBox.Text = _outputManager.OutputContent;
-          var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
-          if (formattedResultTextBox != null)
-          {
-            formattedResultTextBox.Text = string.Empty; // 清空结果页签的内容
-          }
-          // 使用DataGridManager更新数据源
-          _dataGridManager.UpdateDataSource(null);
-          _filteredCommits.Clear(); // 清空筛选结果
-        });
-        return;
-      }
-
-      // 获取选择的字段
-      List<string> selectedFields = new List<string>();
-      Dispatcher.Invoke(() =>
-      {
-        selectedFields = _formattingManager.GetSelectedFields(
-          RepositoryFieldCheckBox.IsChecked == true,
-          RepoPathFieldCheckBox.IsChecked == true,
-          RepoFolderFieldCheckBox.IsChecked == true,
-          CommitIdFieldCheckBox.IsChecked == true,
-          AuthorFieldCheckBox.IsChecked == true,
-          DateFieldCheckBox.IsChecked == true,
-          MessageFieldCheckBox.IsChecked == true);
-
-        // 使用DataGridManager更新数据源
-        _dataGridManager.UpdateDataSource(_allCommits);
-        _filteredCommits = new List<CommitInfo>(_allCommits); // 重置筛选结果
-        SearchFilterTextBox.Clear(); // 清空搜索框
-      });
-
-      // 生成统计数据(如果启用)
-      var statsOutput = new StringBuilder();
-      bool enableStats = false;
-      Dispatcher.Invoke(() =>
-      {
-        enableStats = EnableStatsCheckBox.IsChecked == true;
-      });
-
-      if (enableStats)
-      {
-        statsOutput.AppendLine("\n======== 提交统计 ========\n");
-
-        // 使用StatisticsManager生成统计信息
-        _statisticsManager.GenerateStats(
-            _allCommits,
-            statsOutput,
-            StatsByAuthorCheckBox.IsChecked == true,
-            StatsByRepoCheckBox.IsChecked == true,
-            StatsByDateCheckBox.IsChecked == true);
-
-        statsOutput.AppendLine("\n==========================\n");
-      }
-
-      // 应用自定义格式
-      string format = "";
-      bool showRepeatedRepoNames = false;
-
-      Dispatcher.Invoke(() =>
-      {
-        format = FormatTextBox.Text;
-        showRepeatedRepoNames = ShowRepeatedRepoNamesCheckBox.IsChecked == true;
-      });
-
-      // 用于保存格式化后的输出内容
-      string formattedContent = string.Empty;
-
-      if (!string.IsNullOrEmpty(format))
-      {
-        // 使用FormattingManager格式化提交记录
-        string formattedOutput = _formattingManager.FormatCommits(
-            _allCommits,
-            format,
-            showRepeatedRepoNames);
-
-        // 合并统计和格式化输出
-        formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), formattedOutput, enableStats);
-
-        Dispatcher.Invoke(() =>
-        {
-          ResultTextBox.Text = _outputManager.OutputContent + Environment.NewLine + formattedContent;
-          // 在"结果"页签中仅显示格式化的结果，不包含日志输出
-          var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
-          if (formattedResultTextBox != null)
-          {
-            formattedResultTextBox.Text = formattedContent;
-          }
-        });
-      }
-      else
-      {
-        // 如果没有指定格式，显示所有字段
-        var filteredCommits = new List<CommitInfo>();
-        foreach (var commit in _allCommits)
-        {
-          // 使用FormattingManager创建过滤后的提交信息
-          filteredCommits.Add(_formattingManager.CreateFilteredCommit(commit, selectedFields));
-        }
-
-        // 使用JSON格式
-        string jsonOutput = JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented);
-        formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), jsonOutput, enableStats);
-
-        Dispatcher.Invoke(() =>
-        {
-          ResultTextBox.Text = _outputManager.OutputContent + Environment.NewLine + formattedContent;
-          // 在"结果"页签中仅显示格式化的结果，不包含日志输出
-          var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
-          if (formattedResultTextBox != null)
-          {
-            formattedResultTextBox.Text = formattedContent;
-          }
-        });
-      }
-    }
-
-    // 生成统计数据并添加到输出字符串
-    private void GenerateStats(StringBuilder output)
-    {
-      // 使用StatisticsManager生成统计信息
-      _statisticsManager.GenerateStats(
-          _allCommits,
-          output,
-          StatsByAuthorCheckBox.IsChecked == true,
-          StatsByRepoCheckBox.IsChecked == true,
-          StatsByDateCheckBox.IsChecked == true);
-    }
-
-    private void SaveAsTextWithStats(string path, List<Dictionary<string, string>> commits, string statsOutput)
-    {
-      var sb = new StringBuilder();
-
-      // 先添加统计数据
-      sb.Append(statsOutput);
-
-      // 计算每列的最大宽度
-      var columnWidths = new Dictionary<string, int>();
-      foreach (var key in commits[0].Keys)
-      {
-        columnWidths[key] = key.Length;
-      }
-
-      foreach (var commit in commits)
-      {
-        foreach (var key in commit.Keys)
-        {
-          if (commit[key] != null && commit[key].Length > columnWidths[key])
-          {
-            columnWidths[key] = commit[key].Length;
-          }
-        }
-      }
-
-      // 添加表头
-      sb.AppendLine(string.Join(" | ", commits[0].Keys.Select(k => k.PadRight(columnWidths[k]))));
-      sb.AppendLine(string.Join("-+-", commits[0].Keys.Select(k => new string('-', columnWidths[k]))));
-
-      // 添加数据行
-      foreach (var commit in commits)
-      {
-        sb.AppendLine(string.Join(" | ", commit.Keys.Select(k => (commit[k] ?? "").PadRight(columnWidths[k]))));
-      }
-
-      File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
-    }
-
-    private void SaveAsHtmlWithStats(string path, List<Dictionary<string, string>> commits, string statsOutput)
-    {
-      if (commits.Count == 0) return;
-
-      var sb = new StringBuilder();
-
-      sb.AppendLine("<!DOCTYPE html>");
-      sb.AppendLine("<html>");
-      sb.AppendLine("<head>");
-      sb.AppendLine("    <meta charset=\"UTF-8\">");
-      sb.AppendLine("    <title>Git提交记录</title>");
-      sb.AppendLine("    <style>");
-      sb.AppendLine("        body { font-family: Arial, sans-serif; margin: 20px; }");
-      sb.AppendLine("        table { border-collapse: collapse; width: 100%; margin-bottom: 30px; }");
-      sb.AppendLine("        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }");
-      sb.AppendLine("        th { background-color: #f2f2f2; }");
-      sb.AppendLine("        tr:nth-child(even) { background-color: #f9f9f9; }");
-      sb.AppendLine("        .repo-header { background-color: #e6f7ff; font-weight: bold; }");
-      sb.AppendLine("        .stats-section { margin-bottom: 20px; }");
-      sb.AppendLine("        .stats-table { width: auto; min-width: 300px; }");
-      sb.AppendLine("        h2 { color: #333; margin-top: 30px; }");
-      sb.AppendLine("        pre { background-color: #f5f5f5; padding: 10px; white-space: pre-wrap; }");
-      sb.AppendLine("    </style>");
-      sb.AppendLine("</head>");
-      sb.AppendLine("<body>");
-      sb.AppendLine("    <h1>Git提交记录</h1>");
-
-      // 添加统计部分
-      sb.AppendLine("    <div class=\"stats-section\">");
-      sb.AppendLine("        <h2>提交统计</h2>");
-      sb.AppendLine("        <pre>" + System.Web.HttpUtility.HtmlEncode(statsOutput) + "</pre>");
-      sb.AppendLine("    </div>");
-
-      sb.AppendLine("    <h2>提交详细列表</h2>");
-      sb.AppendLine("    <table>");
-
-      // 添加表头
-      sb.AppendLine("        <tr>");
-      foreach (var key in commits[0].Keys)
-      {
-        sb.AppendLine(string.Format("            <th>{0}</th>", key));
-      }
-      sb.AppendLine("        </tr>");
-
-      // 添加数据行
-      string lastRepo = "";
-      foreach (var commit in commits)
-      {
-        string currentRepo = commit.ContainsKey("RepoFolder") ? commit["RepoFolder"] :
-                            (commit.ContainsKey("Repository") ? commit["Repository"] : "");
-
-        // 如果是新仓库的第一条记录，添加特殊样式
-        if (currentRepo != lastRepo)
-        {
-          sb.AppendLine("        <tr class='repo-header'>");
-          lastRepo = currentRepo;
-        }
-        else
-        {
-          sb.AppendLine("        <tr>");
-        }
-
-        foreach (var key in commit.Keys)
-        {
-          string value = commit[key] ?? "";
-          sb.AppendLine(string.Format("            <td>{0}</td>", System.Web.HttpUtility.HtmlEncode(value)));
-        }
-        sb.AppendLine("        </tr>");
-      }
-
-      sb.AppendLine("    </table>");
-      sb.AppendLine(string.Format("    <p>生成时间: {0}</p>", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
-      sb.AppendLine("</body>");
-      sb.AppendLine("</html>");
-
-      File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
-    }
-
-    private void SaveAsCsv(string path, List<Dictionary<string, string>> commits)
-    {
-      if (commits.Count == 0) return;
-
-      var sb = new StringBuilder();
-
-      // 添加CSV头行
-      sb.AppendLine(string.Join(",", commits[0].Keys.Select(k => "\"" + k + "\"")));
-
-      // 添加数据行
-      foreach (var commit in commits)
-      {
-        sb.AppendLine(string.Join(",", commit.Values.Select(v => "\"" + (v ?? "").Replace("\"", "\"\"") + "\"")));
-      }
-
-      File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
-    }
-
-    private void SaveAsText(string path, List<Dictionary<string, string>> commits)
-    {
-      if (commits.Count == 0) return;
-
-      var sb = new StringBuilder();
-
-      // 计算每列的最大宽度
-      var columnWidths = new Dictionary<string, int>();
-      foreach (var key in commits[0].Keys)
-      {
-        columnWidths[key] = key.Length;
-      }
-
-      foreach (var commit in commits)
-      {
-        foreach (var key in commit.Keys)
-        {
-          if (commit[key] != null && commit[key].Length > columnWidths[key])
-          {
-            columnWidths[key] = commit[key].Length;
-          }
-        }
-      }
-
-      // 添加表头
-      sb.AppendLine(string.Join(" | ", commits[0].Keys.Select(k => k.PadRight(columnWidths[k]))));
-      sb.AppendLine(string.Join("-+-", commits[0].Keys.Select(k => new string('-', columnWidths[k]))));
-
-      // 添加数据行
-      foreach (var commit in commits)
-      {
-        sb.AppendLine(string.Join(" | ", commit.Keys.Select(k => (commit[k] ?? "").PadRight(columnWidths[k]))));
-      }
-
-      File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
-    }
-
-    private void SaveAsHtml(string path, List<Dictionary<string, string>> commits)
-    {
-      if (commits.Count == 0) return;
-
-      var sb = new StringBuilder();
-
-      sb.AppendLine("<!DOCTYPE html>");
-      sb.AppendLine("<html>");
-      sb.AppendLine("<head>");
-      sb.AppendLine("    <meta charset=\"UTF-8\">");
-      sb.AppendLine("    <title>Git提交记录</title>");
-      sb.AppendLine("    <style>");
-      sb.AppendLine("        body { font-family: Arial, sans-serif; margin: 20px; }");
-      sb.AppendLine("        table { border-collapse: collapse; width: 100%; }");
-      sb.AppendLine("        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }");
-      sb.AppendLine("        th { background-color: #f2f2f2; }");
-      sb.AppendLine("        tr:nth-child(even) { background-color: #f9f9f9; }");
-      sb.AppendLine("        .repo-header { background-color: #e6f7ff; font-weight: bold; }");
-      sb.AppendLine("    </style>");
-      sb.AppendLine("</head>");
-      sb.AppendLine("<body>");
-      sb.AppendLine("    <h1>Git提交记录</h1>");
-      sb.AppendLine("    <table>");
-
-      // 添加表头
-      sb.AppendLine("        <tr>");
-      foreach (var key in commits[0].Keys)
-      {
-        sb.AppendLine(string.Format("            <th>{0}</th>", key));
-      }
-      sb.AppendLine("        </tr>");
-
-      // 添加数据行
-      string lastRepo = "";
-      foreach (var commit in commits)
-      {
-        string currentRepo = commit.ContainsKey("RepoFolder") ? commit["RepoFolder"] :
-                            (commit.ContainsKey("Repository") ? commit["Repository"] : "");
-
-        // 如果是新仓库的第一条记录，添加特殊样式
-        if (currentRepo != lastRepo)
-        {
-          sb.AppendLine("        <tr class='repo-header'>");
-          lastRepo = currentRepo;
-        }
-        else
-        {
-          sb.AppendLine("        <tr>");
-        }
-
-        foreach (var key in commit.Keys)
-        {
-          string value = commit[key] ?? "";
-          sb.AppendLine(string.Format("            <td>{0}</td>", System.Web.HttpUtility.HtmlEncode(value)));
-        }
-        sb.AppendLine("        </tr>");
-      }
-
-      sb.AppendLine("    </table>");
-      sb.AppendLine(string.Format("    <p>生成时间: {0}</p>", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
-      sb.AppendLine("</body>");
-      sb.AppendLine("</html>");
-
-      File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
-    }
-
-    private void SaveAsXml(string path, List<Dictionary<string, string>> commits)
-    {
-      if (commits.Count == 0) return;
-
-      var xmlDoc = new XmlDocument();
-      var xmlDecl = xmlDoc.CreateXmlDeclaration("1.0", "UTF-8", null);
-      xmlDoc.AppendChild(xmlDecl);
-
-      var rootElement = xmlDoc.CreateElement("GitCommits");
-      xmlDoc.AppendChild(rootElement);
-
-      foreach (var commit in commits)
-      {
-        var commitElement = xmlDoc.CreateElement("Commit");
-
-        foreach (var kvp in commit)
-        {
-          var fieldElement = xmlDoc.CreateElement(kvp.Key);
-          fieldElement.InnerText = kvp.Value ?? "";
-          commitElement.AppendChild(fieldElement);
-        }
-
-        rootElement.AppendChild(commitElement);
-      }
-
-      xmlDoc.Save(path);
     }
 
     // 更新输出内容
@@ -1255,6 +782,7 @@ namespace GitCommitsWPF
       {
         // 如果没有筛选条件，显示所有数据
         _dataGridManager.UpdateDataSource(_allCommits);
+        _filteredCommits = new List<CommitInfo>(_allCommits);
         return;
       }
 
@@ -1820,14 +1348,17 @@ namespace GitCommitsWPF
     // 停止查询
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
-      if (_isRunning)
+      if (_queryExecutionManager.IsRunning)
       {
-        _isRunning = false;
-        _gitOperationsManager.IsRunning = false;
+        _queryExecutionManager.IsRunning = false;
         StartButton.IsEnabled = true;
-        UpdateOutput("===== 查询已手动停止 =====");
-        ProgressBar.Visibility = Visibility.Collapsed;
+        StopButton.IsEnabled = false;
+        _outputManager.UpdateOutput("===== 查询已手动停止 =====");
+        _outputManager.HideProgressBar();
         ShowCustomMessageBox("提示", "查询已手动停止", true);
+
+        // 同步状态
+        _isRunning = _queryExecutionManager.IsRunning;
       }
       else
       {
