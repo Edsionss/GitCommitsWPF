@@ -1,11 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using System.Text;
 using System.Windows;
-using System.Windows.Controls;
-using Newtonsoft.Json;
 using Button = System.Windows.Controls.Button;
 using GitCommitsWPF.Models;
 using GitCommitsWPF.Services;
@@ -18,8 +14,7 @@ namespace GitCommitsWPF
   public partial class MainWindow : Window
   {
     private List<CommitInfo> _allCommits = new List<CommitInfo>();
-    // private int _repoCount = 0;
-    // private int _currentRepo = 0;
+
     private bool _isRunning = false;
     private List<CommitInfo> _filteredCommits = new List<CommitInfo>(); // 添加筛选后的提交列表
 
@@ -261,12 +256,6 @@ namespace GitCommitsWPF
       SaveRecentLocations();
     }
 
-    // 配置DataGrid的属性和行为
-    // private void ConfigureDataGrid()
-    // {
-    //   // 使用DataGridManager进行配置，无需在此处直接配置
-    //   // 已在构造函数中通过_dataGridManager.Initialize完成配置
-    // }
 
     // 加载最近使用的位置
     private void LoadRecentLocations()

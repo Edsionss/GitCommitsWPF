@@ -5,6 +5,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using GitCommitsWPF.Models;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
 
 namespace GitCommitsWPF.Services
 {
@@ -43,18 +45,106 @@ namespace GitCommitsWPF.Services
 
       try
       {
-        // 查找所有包含.git目录的文件夹
-        var gitDirs = new DirectoryInfo(path).GetDirectories(".git", SearchOption.AllDirectories);
+        // 使用ConcurrentBag存储结果，以支持并行处理
+        var gitReposBag = new ConcurrentBag<DirectoryInfo>();
 
-        // 返回包含.git目录的父目录（即Git仓库根目录）
-        return gitDirs.Select(gitDir => gitDir.Parent)
-            .Where(parent => parent != null)
-            .ToList();
+        // 首先检查当前目录是否是Git仓库
+        if (IsGitRepository(path))
+        {
+          gitReposBag.Add(new DirectoryInfo(path));
+          return gitReposBag.ToList();
+        }
+
+        // 获取顶级目录
+        DirectoryInfo[] topDirs;
+        try
+        {
+          topDirs = new DirectoryInfo(path).GetDirectories();
+        }
+        catch
+        {
+          return new List<DirectoryInfo>();
+        }
+
+        // 并行处理第一级子目录
+        int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1);
+        Parallel.ForEach(topDirs, new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism }, dir =>
+        {
+          try
+          {
+            // 检查当前目录是否包含.git
+            string gitDir = Path.Combine(dir.FullName, ".git");
+            if (Directory.Exists(gitDir))
+            {
+              gitReposBag.Add(dir);
+            }
+            else
+            {
+              // 递归搜索子目录 - 使用深度优先搜索以获得更好的性能
+              SearchGitRepositories(dir, gitReposBag);
+            }
+          }
+          catch
+          {
+            // 忽略单个目录的错误
+          }
+        });
+
+        // 转换为列表并返回
+        return gitReposBag.ToList();
       }
       catch (Exception)
       {
         // 处理异常情况，如权限不足等
         return new List<DirectoryInfo>();
+      }
+    }
+
+    /// <summary>
+    /// 递归搜索Git仓库
+    /// </summary>
+    /// <param name="dir">要搜索的目录</param>
+    /// <param name="reposBag">结果集合</param>
+    private static void SearchGitRepositories(DirectoryInfo dir, ConcurrentBag<DirectoryInfo> reposBag)
+    {
+      try
+      {
+        // 获取子目录
+        DirectoryInfo[] subdirs;
+        try
+        {
+          subdirs = dir.GetDirectories();
+        }
+        catch
+        {
+          return; // 忽略权限错误
+        }
+
+        // 检查是否有.git目录
+        foreach (var subdir in subdirs)
+        {
+          try
+          {
+            string gitDir = Path.Combine(subdir.FullName, ".git");
+            if (Directory.Exists(gitDir))
+            {
+              reposBag.Add(subdir);
+            }
+            else
+            {
+              // 递归搜索
+              SearchGitRepositories(subdir, reposBag);
+            }
+          }
+          catch
+          {
+            // 忽略单个目录的错误
+          }
+        }
+      }
+      catch
+      {
+        // 忽略错误并继续
       }
     }
 
@@ -167,6 +257,10 @@ namespace GitCommitsWPF.Services
           arguments += " --author=\"" + author + "\"";
         }
 
+        // 添加性能优化选项
+        arguments += " --all"; // 包含所有引用
+        arguments += " -n1000"; // 限制结果数量
+
         // 执行Git命令
         var process = new Process
         {
@@ -182,26 +276,36 @@ namespace GitCommitsWPF.Services
         };
 
         process.Start();
-        var output = process.StandardOutput.ReadToEnd();
+        var repo = new DirectoryInfo(repoPath);
+
+        // 使用ConcurrentBag存储结果
+        var commitsBag = new ConcurrentBag<CommitInfo>();
+
+        // 逐行读取并处理输出
+        List<string> lines = new List<string>();
+        while (!process.StandardOutput.EndOfStream)
+        {
+          string line = process.StandardOutput.ReadLine();
+          if (!string.IsNullOrEmpty(line))
+          {
+            lines.Add(line);
+          }
+        }
+
         process.WaitForExit();
 
         // 恢复原目录
         Directory.SetCurrentDirectory(currentDirectory);
 
-        if (!string.IsNullOrEmpty(output))
+        // 并行处理结果
+        Parallel.ForEach(lines, line =>
         {
-          var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-          var repo = new DirectoryInfo(repoPath);
-
-          foreach (var line in lines)
+          try
           {
-            if (string.IsNullOrEmpty(line))
-              continue;
-
             var parts = line.Split('|');
             if (parts.Length >= 4)
             {
-              commits.Add(new CommitInfo
+              commitsBag.Add(new CommitInfo
               {
                 Repository = repo.Name,
                 RepoPath = repo.FullName,
@@ -213,12 +317,20 @@ namespace GitCommitsWPF.Services
               });
             }
           }
-        }
+          catch
+          {
+            // 忽略单行解析错误
+          }
+        });
+
+        // 转换为列表
+        commits = commitsBag.ToList();
       }
       catch (Exception)
       {
         // 处理异常
       }
+
       return commits;
     }
   }
