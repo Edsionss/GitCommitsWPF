@@ -102,10 +102,44 @@ namespace GitCommitsWPF.Services
       disableStartButton();
       enableStopButton();
 
+      // 记录开始时间
+      DateTime startTime = DateTime.Now;
+
       try
       {
         // 先添加一个分隔线
         _outputManager.AddSeparator();
+
+        // 输出扫描配置信息
+        _outputManager.UpdateOutput("===== 开始Git提交扫描 =====");
+        _outputManager.UpdateOutput("扫描配置:");
+
+        // 输出路径信息
+        var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+        _outputManager.UpdateOutput($"- 扫描路径数量: {paths.Count}");
+
+        // 输出时间范围信息
+        string timeRangeDesc = GetTimeRangeDescription(timeRange, startDate, endDate);
+        _outputManager.UpdateOutput($"- 时间范围: {timeRangeDesc}");
+
+        // 输出作者信息
+        _outputManager.UpdateOutput($"- 作者: {(string.IsNullOrEmpty(author) ? "所有作者" : author)}");
+        if (!string.IsNullOrEmpty(authorFilter))
+        {
+          _outputManager.UpdateOutput($"- 作者过滤: {authorFilter}");
+        }
+
+        // 输出其他配置
+        _outputManager.UpdateOutput($"- 验证Git路径: {(verifyGitPaths ? "是" : "否")}");
+        _outputManager.UpdateOutput($"- 启用统计: {(getEnableStats() ? "是" : "否")}");
+        if (getEnableStats())
+        {
+          _outputManager.UpdateOutput($"  - 按作者统计: {(getStatsByAuthor() ? "是" : "否")}");
+          _outputManager.UpdateOutput($"  - 按仓库统计: {(getStatsByRepo() ? "是" : "否")}");
+          _outputManager.UpdateOutput($"  - 按日期统计: {(getStatsByDate() ? "是" : "否")}");
+        }
+
+        _outputManager.UpdateOutput("===== 开始执行扫描 =====");
 
         // 异步执行查询
         await CollectGitCommits(
@@ -116,6 +150,13 @@ namespace GitCommitsWPF.Services
             author,
             authorFilter,
             verifyGitPaths);
+
+        // 计算扫描用时
+        TimeSpan duration = DateTime.Now - startTime;
+        string durationText = FormatDuration(duration);
+
+        // 输出扫描完成和用时信息
+        _outputManager.UpdateOutput($"===== 扫描完成，用时: {durationText} =====");
 
         // 查询完成后，显示结果并更新UI
         ShowResults(
@@ -133,7 +174,8 @@ namespace GitCommitsWPF.Services
         setSaveButtonEnabled();
         int commitCount = _allCommits.Count;
         string commitText = commitCount == 1 ? "条提交记录" : "条提交记录";
-        _outputManager.UpdateOutput(string.Format("===== 扫描完成，找到 {0} {1} =====，点击结果页签查看", commitCount, commitText));
+        _outputManager.UpdateOutput(string.Format("===== 扫描完成，找到 {0} {1}，总用时: {2} =====，点击结果页签查看",
+            commitCount, commitText, durationText));
 
         return true;
       }
@@ -149,6 +191,65 @@ namespace GitCommitsWPF.Services
         disableStopButton();
         enableStartButton();
         _outputManager.HideProgressBar();
+      }
+    }
+
+    /// <summary>
+    /// 获取时间范围的描述
+    /// </summary>
+    private string GetTimeRangeDescription(string timeRange, DateTime? startDate, DateTime? endDate)
+    {
+      switch (timeRange)
+      {
+        case "day":
+          return "今天";
+        case "week":
+          // 计算本周一和本周日
+          DateTime today = DateTime.Today;
+          int daysUntilMonday = ((int)today.DayOfWeek == 0 ? 7 : (int)today.DayOfWeek) - 1;
+          DateTime monday = today.AddDays(-daysUntilMonday);
+          DateTime sunday = monday.AddDays(6);
+          return $"本周 ({monday.ToString("yyyy-MM-dd")} 至 {sunday.ToString("yyyy-MM-dd")})";
+        case "month":
+          return $"本月 ({DateTime.Today.AddMonths(-1).ToString("yyyy-MM-dd")} 至 {DateTime.Today.ToString("yyyy-MM-dd")})";
+        case "year":
+          return $"本年 ({DateTime.Today.AddYears(-1).ToString("yyyy-MM-dd")} 至 {DateTime.Today.ToString("yyyy-MM-dd")})";
+        case "custom":
+          if (startDate.HasValue && endDate.HasValue)
+          {
+            return $"自定义 ({startDate.Value.ToString("yyyy-MM-dd")} 至 {endDate.Value.ToString("yyyy-MM-dd")})";
+          }
+          else if (startDate.HasValue)
+          {
+            return $"自定义 ({startDate.Value.ToString("yyyy-MM-dd")} 至 今天)";
+          }
+          else if (endDate.HasValue)
+          {
+            return $"自定义 (开始 至 {endDate.Value.ToString("yyyy-MM-dd")})";
+          }
+          return "自定义";
+        default: // "all"
+          return "所有时间";
+      }
+    }
+
+    /// <summary>
+    /// 格式化时间间隔
+    /// </summary>
+    private string FormatDuration(TimeSpan duration)
+    {
+      // 格式化为 时:分:秒 格式，如果时间小于1小时则只显示分:秒
+      if (duration.TotalHours >= 1)
+      {
+        return $"{(int)duration.TotalHours}小时{duration.Minutes}分{duration.Seconds}秒";
+      }
+      else if (duration.TotalMinutes >= 1)
+      {
+        return $"{duration.Minutes}分{duration.Seconds}秒";
+      }
+      else
+      {
+        return $"{duration.Seconds}秒";
       }
     }
 

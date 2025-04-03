@@ -431,6 +431,9 @@ namespace GitCommitsWPF.Utils
       List<CommitInfo> commits = new List<CommitInfo>();
       _isRunning = true;
 
+      // 记录扫描开始时间
+      DateTime scanStartTime = DateTime.Now;
+
       try
       {
         // 显示进度条 - 改为任务执行前先更新UI
@@ -438,10 +441,40 @@ namespace GitCommitsWPF.Utils
         await _outputManager.UpdateProgressBarAsync(5); // 设置初始进度值
         await _outputManager.UpdateOutputAsync("正在初始化Git仓库扫描...");
 
+        // 预处理筛选条件，优化性能
+        await _outputManager.UpdateOutputAsync("预处理筛选条件...");
+
         // 处理日期范围
         if (string.IsNullOrEmpty(until))
         {
           until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd"); // 设置到明天来包含今天的提交
+        }
+
+        // 判断是否有筛选条件
+        bool hasFilters = !string.IsNullOrEmpty(since) || !string.IsNullOrEmpty(until) ||
+                          !string.IsNullOrEmpty(author) || !string.IsNullOrEmpty(authorFilter);
+
+        if (hasFilters)
+        {
+          await _outputManager.UpdateOutputAsync("检测到筛选条件，将采用优化扫描策略");
+
+          // 打印详细筛选条件
+          if (!string.IsNullOrEmpty(since))
+          {
+            await _outputManager.UpdateOutputAsync($"- 开始时间: {since}");
+          }
+          if (!string.IsNullOrEmpty(until))
+          {
+            await _outputManager.UpdateOutputAsync($"- 结束时间: {until}");
+          }
+          if (!string.IsNullOrEmpty(author))
+          {
+            await _outputManager.UpdateOutputAsync($"- 作者筛选: {author}");
+          }
+          if (!string.IsNullOrEmpty(authorFilter))
+          {
+            await _outputManager.UpdateOutputAsync($"- 作者关键词筛选: {authorFilter}");
+          }
         }
 
         // 增加进度到15%，表示日期处理阶段
@@ -473,29 +506,45 @@ namespace GitCommitsWPF.Utils
         await _outputManager.UpdateProgressBarAsync(20);
         await _outputManager.UpdateOutputAsync("正在搜索Git仓库，请稍后...");
 
+        // 实时打印扫描路径信息
+        await _outputManager.UpdateOutputAsync($"开始扫描指定的 {paths.Count} 个路径...");
+        foreach (var path in paths)
+        {
+          await _outputManager.UpdateOutputAsync($"- 扫描路径: {path}");
+        }
+
         // 并行收集所有仓库路径
         var gitRepos = new List<DirectoryInfo>();
         var validPaths = new List<string>();
 
         // 验证路径是否存在
+        int validPathCount = 0;
+        int invalidPathCount = 0;
         foreach (var path in paths)
         {
           if (Directory.Exists(path))
           {
             validPaths.Add(path);
+            validPathCount++;
           }
           else
           {
             await _outputManager.UpdateOutputAsync($"警告: 路径不存在: {path}");
+            invalidPathCount++;
           }
         }
+
+        await _outputManager.UpdateOutputAsync($"路径验证结果: {validPathCount} 个有效路径, {invalidPathCount} 个无效路径");
 
         // 并行收集仓库
         ConcurrentBag<DirectoryInfo> reposBag = new ConcurrentBag<DirectoryInfo>();
 
         // 最大并行度 - 根据CPU核心数调整，避免过度并行
         int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1);
-        await _outputManager.UpdateOutputAsync($"使用并行度: {maxDegreeOfParallelism}");
+        await _outputManager.UpdateOutputAsync($"使用并行度: {maxDegreeOfParallelism} 进行扫描");
+
+        // 记录仓库搜索开始时间
+        DateTime repoSearchStartTime = DateTime.Now;
 
         await Task.Run(() =>
         {
@@ -511,6 +560,7 @@ namespace GitCommitsWPF.Utils
                 if (IsGitRepository(path))
                 {
                   reposBag.Add(new DirectoryInfo(path));
+                  _outputManager.UpdateOutput($"找到Git仓库: {path}");
                 }
               }
               else
@@ -527,16 +577,26 @@ namespace GitCommitsWPF.Utils
           });
         });
 
+        // 计算仓库搜索用时
+        TimeSpan repoSearchTime = DateTime.Now - repoSearchStartTime;
+
         // 转换为列表并排序，确保结果一致性
         gitRepos = reposBag.ToList();
 
         // 移除重复的仓库（可能由于路径嵌套导致）
+        int originalRepoCount = gitRepos.Count;
         gitRepos = gitRepos.GroupBy(repo => repo.FullName)
                           .Select(group => group.First())
                           .ToList();
+        int uniqueRepoCount = gitRepos.Count;
+
+        if (originalRepoCount > uniqueRepoCount)
+        {
+          await _outputManager.UpdateOutputAsync($"移除了 {originalRepoCount - uniqueRepoCount} 个重复的Git仓库");
+        }
 
         _repoCount = gitRepos.Count;
-        await _outputManager.UpdateOutputAsync($"总共找到 {_repoCount} 个Git仓库");
+        await _outputManager.UpdateOutputAsync($"总共找到 {_repoCount} 个Git仓库 (用时: {FormatTimeSpan(repoSearchTime)})");
 
         // 如果没有找到仓库，设置为较高进度并退出
         if (_repoCount == 0)
@@ -546,12 +606,63 @@ namespace GitCommitsWPF.Utils
           return commits;
         }
 
+        // 如果存在筛选条件，先进行预筛选以提高性能
+        if (hasFilters)
+        {
+          DateTime preFilterStartTime = DateTime.Now;
+          await _outputManager.UpdateOutputAsync("正在预筛选仓库...");
+          List<DirectoryInfo> filteredRepos = new List<DirectoryInfo>();
+
+          // 并行预筛选
+          ConcurrentBag<DirectoryInfo> filteredReposBag = new ConcurrentBag<DirectoryInfo>();
+
+          await Task.Run(() =>
+          {
+            Parallel.ForEach(gitRepos, new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism }, repo =>
+            {
+              if (!_isRunning) return;
+
+              try
+              {
+                // 预检查仓库是否包含符合条件的提交
+                if (PreCheckRepository(repo, since, until, author))
+                {
+                  filteredReposBag.Add(repo);
+                  _outputManager.UpdateOutput($"仓库符合筛选条件: {repo.FullName}");
+                }
+                else
+                {
+                  _outputManager.UpdateOutput($"仓库不符合筛选条件，已跳过: {repo.FullName}");
+                }
+              }
+              catch (Exception)
+              {
+                // 如果预检查失败，添加到结果中以确保不会漏掉
+                filteredReposBag.Add(repo);
+                _outputManager.UpdateOutput($"仓库预检查失败，将包含在结果中: {repo.FullName}");
+              }
+            });
+          });
+
+          // 更新仓库列表为预筛选后的结果
+          int originalCount = gitRepos.Count;
+          gitRepos = filteredReposBag.ToList();
+          _repoCount = gitRepos.Count;
+
+          TimeSpan preFilterTime = DateTime.Now - preFilterStartTime;
+          await _outputManager.UpdateOutputAsync($"预筛选完成 (用时: {FormatTimeSpan(preFilterTime)})");
+          await _outputManager.UpdateOutputAsync($"预筛选结果: 从 {originalCount} 个仓库中筛选出 {_repoCount} 个符合条件的仓库");
+        }
+
         // 设置为40%进度，表示开始处理仓库
         await _outputManager.UpdateProgressBarAsync(40);
 
         // 并行处理所有Git仓库
         ConcurrentBag<CommitInfo> commitsBag = new ConcurrentBag<CommitInfo>();
         ConcurrentBag<DateTime?> createDatesBag = new ConcurrentBag<DateTime?>();
+
+        // 记录提交扫描开始时间
+        DateTime commitScanStartTime = DateTime.Now;
 
         // 创建进度报告对象
         var progress = new Progress<ProgressReport>(report =>
@@ -580,9 +691,17 @@ namespace GitCommitsWPF.Utils
               var repoCommits = ProcessSingleRepositoryParallel(repo, since, until, author, authorFilter, gitFields, gitFormat);
 
               // 添加此仓库的提交
-              foreach (var commit in repoCommits)
+              if (repoCommits.Count > 0)
               {
-                commitsBag.Add(commit);
+                _outputManager.UpdateOutput($"  - 从仓库 '{repo.Name}' 中找到 {repoCommits.Count} 个提交");
+                foreach (var commit in repoCommits)
+                {
+                  commitsBag.Add(commit);
+                }
+              }
+              else
+              {
+                _outputManager.UpdateOutput($"  - 仓库 '{repo.Name}' 中未找到符合条件的提交");
               }
 
               // 获取仓库创建日期
@@ -590,7 +709,7 @@ namespace GitCommitsWPF.Utils
               if (repoCreateDate.HasValue)
               {
                 createDatesBag.Add(repoCreateDate);
-                _outputManager.UpdateOutput($"   仓库创建时间: {repoCreateDate.Value.ToString("yyyy-MM-dd HH:mm:ss")}");
+                _outputManager.UpdateOutput($"  - 仓库创建时间: {repoCreateDate.Value.ToString("yyyy-MM-dd HH:mm:ss")}");
               }
             }
             catch (Exception ex)
@@ -600,8 +719,23 @@ namespace GitCommitsWPF.Utils
           });
         });
 
-        // 收集所有提交并按日期排序
+        // 计算提交扫描用时
+        TimeSpan commitScanTime = DateTime.Now - commitScanStartTime;
+
+        // 收集所有提交
         commits = commitsBag.ToList();
+
+        // 按日期排序提交
+        if (commits.Count > 0)
+        {
+          await _outputManager.UpdateOutputAsync("正在对提交记录进行排序...");
+          commits = commits.OrderByDescending(c =>
+          {
+            if (DateTime.TryParse(c.Date, out DateTime date))
+              return date;
+            return DateTime.MinValue;
+          }).ToList();
+        }
 
         // 找出最早的仓库创建日期
         DateTime? earliestRepoDate = null;
@@ -612,6 +746,9 @@ namespace GitCommitsWPF.Utils
 
         // 替换进度条完成消息
         await _outputManager.UpdateOutputAsync("所有仓库处理完成 (100%)");
+
+        // 计算总扫描用时
+        TimeSpan totalScanTime = DateTime.Now - scanStartTime;
 
         // 输出扫描信息
         await _outputManager.UpdateOutputAsync("==== 扫描信息 ====");
@@ -649,6 +786,16 @@ namespace GitCommitsWPF.Utils
         }
 
         await _outputManager.UpdateOutputAsync($"提取的Git字段: {string.Join(", ", gitFields)}");
+
+        // 输出性能统计信息
+        await _outputManager.UpdateOutputAsync("==== 性能统计 ====");
+        await _outputManager.UpdateOutputAsync($"仓库搜索用时: {FormatTimeSpan(repoSearchTime)}");
+        if (hasFilters)
+        {
+          await _outputManager.UpdateOutputAsync($"仓库预筛选用时: {FormatTimeSpan(DateTime.Now - repoSearchStartTime - repoSearchTime)}");
+        }
+        await _outputManager.UpdateOutputAsync($"提交扫描用时: {FormatTimeSpan(commitScanTime)}");
+        await _outputManager.UpdateOutputAsync($"总扫描用时: {FormatTimeSpan(totalScanTime)}");
         await _outputManager.UpdateOutputAsync("===================");
 
         // 输出结果数量
@@ -662,7 +809,7 @@ namespace GitCommitsWPF.Utils
 
         // 设置进度条到完成状态
         await _outputManager.UpdateProgressBarAsync(100);
-        await _outputManager.UpdateOutputAsync("Git提交记录收集完成");
+        await _outputManager.UpdateOutputAsync($"Git提交记录收集完成，总用时: {FormatTimeSpan(totalScanTime)}");
       }
       catch (Exception ex)
       {
@@ -675,6 +822,25 @@ namespace GitCommitsWPF.Utils
       }
 
       return commits;
+    }
+
+    /// <summary>
+    /// 格式化TimeSpan为易读格式
+    /// </summary>
+    private string FormatTimeSpan(TimeSpan time)
+    {
+      if (time.TotalHours >= 1)
+      {
+        return $"{(int)time.TotalHours}小时{time.Minutes}分{time.Seconds}秒";
+      }
+      else if (time.TotalMinutes >= 1)
+      {
+        return $"{time.Minutes}分{time.Seconds}秒";
+      }
+      else
+      {
+        return $"{time.Seconds}秒";
+      }
     }
 
     // 新增方法：异步处理单个Git仓库
@@ -1143,6 +1309,64 @@ namespace GitCommitsWPF.Utils
       }
 
       return repoCreateDate;
+    }
+
+    // 新增方法：预检查仓库是否包含符合条件的提交
+    private bool PreCheckRepository(DirectoryInfo repo, string since, string until, string author)
+    {
+      try
+      {
+        string currentDirectory = Directory.GetCurrentDirectory();
+        Directory.SetCurrentDirectory(repo.FullName);
+
+        // 构建快速检查的Git命令
+        var arguments = "log -n1";  // 只检查是否有至少一个提交符合条件
+
+        if (!string.IsNullOrEmpty(since))
+        {
+          arguments += $" --since=\"{since}\"";
+        }
+
+        if (!string.IsNullOrEmpty(until))
+        {
+          arguments += $" --until=\"{until}\"";
+        }
+
+        if (!string.IsNullOrEmpty(author))
+        {
+          arguments += $" --author=\"{author}\"";
+        }
+
+        // 执行Git命令进行快速检查
+        var process = new Process
+        {
+          StartInfo = new ProcessStartInfo
+          {
+            FileName = "git",
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8
+          }
+        };
+
+        process.Start();
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+
+        // 恢复当前目录
+        Directory.SetCurrentDirectory(currentDirectory);
+
+        // 如果有输出，说明存在符合条件的提交
+        return !string.IsNullOrWhiteSpace(output);
+      }
+      catch (Exception ex)
+      {
+        _outputManager.UpdateOutput($"预检查仓库时出错: {ex.Message}");
+        // 如果出错，保守地返回true以便仓库能被包含在完整扫描中
+        return true;
+      }
     }
   }
 }
