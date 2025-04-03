@@ -60,6 +60,9 @@ namespace GitCommitsWPF
     // GitOperationsManager实例，用于管理Git相关操作
     private GitOperationsManager _gitOperationsManager;
 
+    // StatisticsManager实例，用于管理统计功能
+    private StatisticsManager _statisticsManager = new StatisticsManager();
+
     public MainWindow()
     {
       InitializeComponent();
@@ -474,7 +477,15 @@ namespace GitCommitsWPF
         if (EnableStatsCheckBox.IsChecked == true)
         {
           statsOutput.AppendLine("\n======== 提交统计 ========\n");
-          GenerateStats(statsOutput);
+
+          // 使用StatisticsManager生成统计信息
+          _statisticsManager.GenerateStats(
+              _allCommits,
+              statsOutput,
+              StatsByAuthorCheckBox.IsChecked == true,
+              StatsByRepoCheckBox.IsChecked == true,
+              StatsByDateCheckBox.IsChecked == true);
+
           statsOutput.AppendLine("\n==========================\n");
         }
 
@@ -715,7 +726,15 @@ namespace GitCommitsWPF
       if (enableStats)
       {
         statsOutput.AppendLine("\n======== 提交统计 ========\n");
-        GenerateStats(statsOutput);
+
+        // 使用StatisticsManager生成统计信息
+        _statisticsManager.GenerateStats(
+            _allCommits,
+            statsOutput,
+            StatsByAuthorCheckBox.IsChecked == true,
+            StatsByRepoCheckBox.IsChecked == true,
+            StatsByDateCheckBox.IsChecked == true);
+
         statsOutput.AppendLine("\n==========================\n");
       }
 
@@ -825,155 +844,13 @@ namespace GitCommitsWPF
     // 生成统计数据并添加到输出字符串
     private void GenerateStats(StringBuilder output)
     {
-      // 检查是否有提交记录可以统计
-      if (_allCommits == null || _allCommits.Count == 0)
-      {
-        output.AppendLine("没有找到可以统计的提交记录。");
-        return;
-      }
-
-      // 检查是否启用了不同的统计方式
-      bool statsByAuthor = StatsByAuthorCheckBox.IsChecked == true;
-      bool statsByRepo = StatsByRepoCheckBox.IsChecked == true;
-      bool statsByDate = StatsByDateCheckBox.IsChecked == true;
-
-      // 1. 按作者统计
-      if (statsByAuthor)
-      {
-        output.AppendLine("【按作者统计提交数量】");
-        var authorStats = _allCommits
-            .GroupBy(commit => commit.Author ?? "未知作者")
-            .Select(group => new { Author = group.Key, Count = group.Count() })
-            .OrderByDescending(item => item.Count)
-            .ToList();
-
-        if (authorStats.Count > 0)
-        {
-          // 计算最大宽度
-          int maxAuthorWidth = Math.Max("作者".Length, authorStats.Max(s => s.Author.Length));
-          int maxCountWidth = Math.Max("提交数".Length, authorStats.Max(s => s.Count.ToString().Length));
-
-          // 输出表头
-          output.AppendLine(string.Format("{0} | {1}",
-              "作者".PadRight(maxAuthorWidth),
-              "提交数".PadLeft(maxCountWidth)));
-          output.AppendLine(string.Format("{0}-+-{1}",
-              new string('-', maxAuthorWidth),
-              new string('-', maxCountWidth)));
-
-          // 输出数据行
-          foreach (var stat in authorStats)
-          {
-            output.AppendLine(string.Format("{0} | {1}",
-                stat.Author.PadRight(maxAuthorWidth),
-                stat.Count.ToString().PadLeft(maxCountWidth)));
-          }
-        }
-        else
-        {
-          output.AppendLine("没有作者数据可以统计。");
-        }
-
-        output.AppendLine();
-      }
-
-      // 2. 按仓库统计
-      if (statsByRepo)
-      {
-        output.AppendLine("【按仓库统计提交数量】");
-        var repoStats = _allCommits
-            .GroupBy(commit => !string.IsNullOrEmpty(commit.RepoFolder) ? commit.RepoFolder : commit.Repository)
-            .Select(group => new { Repo = group.Key, Count = group.Count() })
-            .OrderByDescending(item => item.Count)
-            .ToList();
-
-        if (repoStats.Count > 0)
-        {
-          // 计算最大宽度
-          int maxRepoWidth = Math.Max("仓库".Length, repoStats.Max(s => s.Repo.Length));
-          int maxCountWidth = Math.Max("提交数".Length, repoStats.Max(s => s.Count.ToString().Length));
-
-          // 输出表头
-          output.AppendLine(string.Format("{0} | {1}",
-              "仓库".PadRight(maxRepoWidth),
-              "提交数".PadLeft(maxCountWidth)));
-          output.AppendLine(string.Format("{0}-+-{1}",
-              new string('-', maxRepoWidth),
-              new string('-', maxCountWidth)));
-
-          // 输出数据行
-          foreach (var stat in repoStats)
-          {
-            output.AppendLine(string.Format("{0} | {1}",
-                stat.Repo.PadRight(maxRepoWidth),
-                stat.Count.ToString().PadLeft(maxCountWidth)));
-          }
-        }
-        else
-        {
-          output.AppendLine("没有仓库数据可以统计。");
-        }
-
-        output.AppendLine();
-      }
-
-      // 3. 按日期统计
-      if (statsByDate)
-      {
-        output.AppendLine("【按日期统计提交数量】");
-        var dateStats = _allCommits
-            .Select(commit => new
-            {
-              Date = string.IsNullOrEmpty(commit.Date) ?
-                    DateTime.Now.ToString("yyyy-MM-dd") :
-                    GetFormattedDate(commit.Date)
-            })
-            .GroupBy(item => item.Date)
-            .Select(group => new { Date = group.Key, Count = group.Count() })
-            .OrderByDescending(item => item.Date)
-            .ToList();
-
-        if (dateStats.Count > 0)
-        {
-          // 计算最大宽度
-          int maxDateWidth = Math.Max("日期".Length, dateStats.Max(s => s.Date.Length));
-          int maxCountWidth = Math.Max("提交数".Length, dateStats.Max(s => s.Count.ToString().Length));
-
-          // 输出表头
-          output.AppendLine(string.Format("{0} | {1}",
-              "日期".PadRight(maxDateWidth),
-              "提交数".PadLeft(maxCountWidth)));
-          output.AppendLine(string.Format("{0}-+-{1}",
-              new string('-', maxDateWidth),
-              new string('-', maxCountWidth)));
-
-          // 输出数据行
-          foreach (var stat in dateStats)
-          {
-            output.AppendLine(string.Format("{0} | {1}",
-                stat.Date.PadRight(maxDateWidth),
-                stat.Count.ToString().PadLeft(maxCountWidth)));
-          }
-        }
-        else
-        {
-          output.AppendLine("没有日期数据可以统计。");
-        }
-      }
-    }
-
-    // 辅助方法：安全地解析日期字符串
-    private string GetFormattedDate(string dateString)
-    {
-      try
-      {
-        return DateTime.Parse(dateString).ToString("yyyy-MM-dd");
-      }
-      catch (Exception)
-      {
-        // 如果无法解析日期，返回原始字符串或特定标记
-        return "未知日期";
-      }
+      // 使用StatisticsManager生成统计信息
+      _statisticsManager.GenerateStats(
+          _allCommits,
+          output,
+          StatsByAuthorCheckBox.IsChecked == true,
+          StatsByRepoCheckBox.IsChecked == true,
+          StatsByDateCheckBox.IsChecked == true);
     }
 
     private void SaveAsTextWithStats(string path, List<Dictionary<string, string>> commits, string statsOutput)
@@ -1674,9 +1551,6 @@ namespace GitCommitsWPF
 
       buttonPanel.Children.Add(addButton);
       buttonPanel.Children.Add(clearButton);
-      buttonPanel.Children.Add(cancelButton);
-
-      grid.Children.Add(listBox);
       grid.Children.Add(buttonPanel);
 
       selectWindow.Content = grid;
