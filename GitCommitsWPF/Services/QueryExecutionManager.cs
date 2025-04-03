@@ -91,8 +91,14 @@ namespace GitCommitsWPF.Services
       _allCommits.Clear();
       _filteredCommits.Clear();
 
+      // 强制清理内存，确保没有残留引用
+      GC.Collect();
+      GC.WaitForPendingFinalizers();
+
       // 设置运行状态
       _isRunning = true;
+      // 确保GitOperationsManager也是清理状态
+      _gitOperationsManager.IsRunning = true;
 
       // 设置UI状态
       disableStartButton();
@@ -110,6 +116,34 @@ namespace GitCommitsWPF.Services
           return false;
         }
 
+        // 额外的路径验证和格式化 - 清除空路径和重复
+        var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (paths.Count == 0)
+        {
+          _dialogManager.ShowCustomMessageBox("错误", "请先输入有效的Git仓库路径", false);
+          return false;
+        }
+
+        // 检查作者筛选参数是否合法
+        if (!string.IsNullOrEmpty(authorFilter))
+        {
+          var authorPatterns = authorFilter.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+              .Select(p => p.Trim())
+              .Where(p => !string.IsNullOrEmpty(p))
+              .ToArray();
+
+          if (authorPatterns.Length == 0)
+          {
+            _outputManager.OutputWarning("作者关键词筛选参数为空，将忽略作者关键词筛选");
+            authorFilter = string.Empty;
+          }
+        }
+
         // 先添加一个分隔线
         _outputManager.AddSeparator();
 
@@ -117,9 +151,25 @@ namespace GitCommitsWPF.Services
         _outputManager.OutputHighlight("===== 开始Git提交扫描 =====");
         _outputManager.OutputHighlight("扫描配置:");
 
-        // 输出路径信息
-        var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+        // 输出路径信息 - 使用处理后的paths
         _outputManager.OutputInfo($"- 扫描路径数量: {paths.Count}");
+
+        // 如果路径超过5个，只显示前5个，然后显示省略数量
+        if (paths.Count <= 5)
+        {
+          foreach (var path in paths)
+          {
+            _outputManager.OutputInfo($"  - {path}");
+          }
+        }
+        else
+        {
+          for (int i = 0; i < 5; i++)
+          {
+            _outputManager.OutputInfo($"  - {paths[i]}");
+          }
+          _outputManager.OutputInfo($"  - ...以及其他 {paths.Count - 5} 个路径");
+        }
 
         // 输出时间范围信息
         string timeRangeDesc = GetTimeRangeDescription(timeRange, startDate, endDate);
@@ -144,15 +194,22 @@ namespace GitCommitsWPF.Services
 
         _outputManager.OutputHighlight("===== 开始执行扫描 =====");
 
-        // 异步执行查询
+        // 异步执行查询 - 使用验证后的pathsText
         await CollectGitCommits(
-            pathsText,
+            string.Join(Environment.NewLine, paths),
             timeRange,
             startDate,
             endDate,
             author,
             authorFilter,
             verifyGitPaths);
+
+        // 检查是否提前停止
+        if (!_isRunning)
+        {
+          _outputManager.OutputWarning("查询已手动停止");
+          return false;
+        }
 
         // 计算扫描用时
         TimeSpan duration = DateTime.Now - startTime;
@@ -186,11 +243,15 @@ namespace GitCommitsWPF.Services
       {
         _dialogManager.ShowCustomMessageBox("错误", string.Format("执行过程中发生错误：{0}", ex.Message), false);
         _outputManager.OutputError($"执行过程中发生错误: {ex.Message}");
+        // 详细记录异常堆栈，便于调试
+        _outputManager.OutputError($"异常详情: {ex}");
         return false;
       }
       finally
       {
         _isRunning = false;
+        // 确保GitOperationsManager也停止运行
+        _gitOperationsManager.IsRunning = false;
         // 禁用停止按钮，启用开始按钮
         disableStopButton();
         enableStartButton();
@@ -206,30 +267,36 @@ namespace GitCommitsWPF.Services
       switch (timeRange)
       {
         case "day":
-          return "今天";
+          // 对于"今天"选项，明确说明包含全天提交
+          return $"今天 ({DateTime.Today.ToString("yyyy-MM-dd")} 全天)";
         case "week":
           // 计算本周一和本周日
           DateTime today = DateTime.Today;
           int daysUntilMonday = ((int)today.DayOfWeek == 0 ? 7 : (int)today.DayOfWeek) - 1;
           DateTime monday = today.AddDays(-daysUntilMonday);
           DateTime sunday = monday.AddDays(6);
-          return $"本周 ({monday.ToString("yyyy-MM-dd")} 至 {sunday.ToString("yyyy-MM-dd")})";
+          return $"本周 ({monday.ToString("yyyy-MM-dd")} 至 {sunday.ToString("yyyy-MM-dd")} 全天)";
         case "month":
-          return $"本月 ({DateTime.Today.AddMonths(-1).ToString("yyyy-MM-dd")} 至 {DateTime.Today.ToString("yyyy-MM-dd")})";
+          // 计算当月第一天和最后一天
+          DateTime currentDate = DateTime.Today;
+          DateTime firstDayOfMonth = new DateTime(currentDate.Year, currentDate.Month, 1);
+          DateTime lastDayOfMonth = firstDayOfMonth.AddMonths(1).AddDays(-1);
+          return $"本月 ({firstDayOfMonth.ToString("yyyy-MM-dd")} 至 {lastDayOfMonth.ToString("yyyy-MM-dd")} 全天)";
         case "year":
-          return $"本年 ({DateTime.Today.AddYears(-1).ToString("yyyy-MM-dd")} 至 {DateTime.Today.ToString("yyyy-MM-dd")})";
+          DateTime oneYearAgo = DateTime.Today.AddYears(-1);
+          return $"近一年 ({oneYearAgo.ToString("yyyy-MM-dd")} 至 {DateTime.Today.ToString("yyyy-MM-dd")} 全天)";
         case "custom":
           if (startDate.HasValue && endDate.HasValue)
           {
-            return $"自定义 ({startDate.Value.ToString("yyyy-MM-dd")} 至 {endDate.Value.ToString("yyyy-MM-dd")})";
+            return $"自定义 ({startDate.Value.ToString("yyyy-MM-dd")} 至 {endDate.Value.ToString("yyyy-MM-dd")} 全天)";
           }
           else if (startDate.HasValue)
           {
-            return $"自定义 ({startDate.Value.ToString("yyyy-MM-dd")} 至 今天)";
+            return $"自定义 ({startDate.Value.ToString("yyyy-MM-dd")} 至 今天 全天)";
           }
           else if (endDate.HasValue)
           {
-            return $"自定义 (开始 至 {endDate.Value.ToString("yyyy-MM-dd")})";
+            return $"自定义 (全部 至 {endDate.Value.ToString("yyyy-MM-dd")} 全天)";
           }
           return "自定义";
         default: // "all"
@@ -285,6 +352,9 @@ namespace GitCommitsWPF.Services
         until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd");
       }
 
+      // 记录时间范围信息，方便调试
+      _outputManager.OutputHighlight($"时间范围设置 - 开始: {(string.IsNullOrEmpty(since) ? "全部" : since)}，结束: {until}");
+
       // 输出当前筛选条件，帮助调试
       _outputManager.UpdateOutput($"筛选条件 - 作者: {(string.IsNullOrEmpty(author) ? "全部" : author)}");
       if (!string.IsNullOrEmpty(authorFilter))
@@ -292,8 +362,104 @@ namespace GitCommitsWPF.Services
         _outputManager.UpdateOutput($"筛选条件 - 作者关键词: {authorFilter}");
       }
 
-      // 使用GitOperationsManager异步收集Git提交
-      _allCommits = await _gitOperationsManager.CollectGitCommitsAsync(paths, since, until, author, authorFilter, verifyGitPaths);
+      try
+      {
+        // 使用GitOperationsManager异步收集Git提交
+        _allCommits = await _gitOperationsManager.CollectGitCommitsAsync(paths, since, until, author, authorFilter, verifyGitPaths);
+
+        // 检查结果是否为空
+        if (_allCommits == null || _allCommits.Count == 0)
+        {
+          _outputManager.OutputWarning("没有找到符合条件的提交记录");
+          _allCommits = new List<CommitInfo>();
+          return;
+        }
+
+        // 对整个结果集进行日期验证和再次排序
+        // 记录时间戳
+        DateTime startTime = DateTime.Now;
+        _outputManager.OutputInfo("正在对所有提交记录再次验证时间范围...");
+
+        // 解析时间范围，用于验证提交日期
+        DateTime? sinceDate = null;
+        if (!string.IsNullOrEmpty(since))
+        {
+          if (DateTime.TryParse(since, out DateTime parsedSinceDate))
+          {
+            sinceDate = parsedSinceDate;
+          }
+        }
+
+        DateTime? untilDate = null;
+        if (!string.IsNullOrEmpty(until))
+        {
+          if (DateTime.TryParse(until, out DateTime parsedUntilDate))
+          {
+            untilDate = parsedUntilDate;
+          }
+        }
+
+        // 再次过滤结果，确保提交日期在指定范围内
+        _allCommits = _allCommits.Where(commit =>
+        {
+          if (DateTime.TryParse(commit.Date, out DateTime commitDate))
+          {
+            // 检查开始日期
+            if (sinceDate.HasValue && commitDate < sinceDate.Value)
+            {
+              // 提交日期早于开始日期，排除
+              return false;
+            }
+
+            // 检查结束日期 - until日期是不包含的(TimeRangeManager已经将传入的日期+1天)
+            if (untilDate.HasValue && commitDate >= untilDate.Value)
+            {
+              // 提交日期大于等于结束日期，排除
+              return false;
+            }
+
+            return true;
+          }
+
+          // 如果无法解析日期，保留该提交
+          return true;
+        }).ToList();
+
+        // 再次按仓库分组排序
+        var commitsByRepo = _allCommits.GroupBy(c => c.RepoPath ?? "Unknown").ToList();
+        _outputManager.OutputInfo($"提交记录按 {commitsByRepo.Count} 个仓库分组");
+
+        // 创建一个新的排序后的列表
+        var sortedCommits = new List<CommitInfo>();
+
+        // 对每个仓库内部的提交按日期排序
+        foreach (var repoGroup in commitsByRepo)
+        {
+          // 按日期降序排序
+          var repoCommits = repoGroup.OrderByDescending(c =>
+          {
+            if (DateTime.TryParse(c.Date, out DateTime date))
+              return date;
+            return DateTime.MinValue;
+          }).ToList();
+
+          // 添加到结果列表
+          sortedCommits.AddRange(repoCommits);
+        }
+
+        // 用排序后的列表替换原来的列表
+        _allCommits = sortedCommits;
+
+        // 显示处理时间
+        TimeSpan processingTime = DateTime.Now - startTime;
+        _outputManager.OutputSuccess($"所有提交记录验证和排序完成，处理 {_allCommits.Count} 条记录，用时 {processingTime.TotalSeconds:F2} 秒");
+      }
+      catch (Exception ex)
+      {
+        _outputManager.OutputError($"收集Git提交时发生错误: {ex.Message}");
+        // 确保结果不为null
+        _allCommits = new List<CommitInfo>();
+      }
     }
 
     /// <summary>

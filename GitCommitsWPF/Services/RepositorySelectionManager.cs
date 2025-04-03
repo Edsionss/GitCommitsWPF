@@ -203,18 +203,46 @@ namespace GitCommitsWPF.Services
       // 获取当前所有路径
       var paths = currentText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
-      // 使用HashSet去重，保持添加顺序
+      // 使用大小写不敏感的路径比较
+      var pathSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
       var uniquePaths = new List<string>();
-      var pathSet = new HashSet<string>();
+      var normalizedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // 用于存储规范化路径到原始路径的映射
 
       foreach (var path in paths)
       {
         // 确保路径不为空白
         string trimmedPath = path.Trim();
-        if (!string.IsNullOrWhiteSpace(trimmedPath) && !pathSet.Contains(trimmedPath))
+        if (string.IsNullOrWhiteSpace(trimmedPath))
+          continue;
+
+        try
         {
-          pathSet.Add(trimmedPath);
-          uniquePaths.Add(trimmedPath);
+          // 尝试获取完整路径，规范化路径格式
+          string fullPath = Path.GetFullPath(trimmedPath);
+
+          // 如果是不同形式的相同路径，保留第一个遇到的版本
+          if (!pathSet.Contains(fullPath))
+          {
+            pathSet.Add(fullPath);
+            // 存储规范化路径到原始路径的映射
+            normalizedPaths[fullPath] = trimmedPath;
+            // 使用原始路径格式添加到结果列表，保持用户输入格式
+            uniquePaths.Add(trimmedPath);
+          }
+          else
+          {
+            // 发现重复路径，记录日志
+            _outputManager.UpdateOutput($"检测到重复路径: {trimmedPath} 已存在，将被移除");
+          }
+        }
+        catch (Exception)
+        {
+          // 如果无法解析完整路径（可能是无效路径），则使用原始路径
+          if (!pathSet.Contains(trimmedPath))
+          {
+            pathSet.Add(trimmedPath);
+            uniquePaths.Add(trimmedPath);
+          }
         }
       }
 
@@ -227,6 +255,9 @@ namespace GitCommitsWPF.Services
           // 如果文本没有被其他操作改变
           if (_pathsTextBox.Text == currentText)
           {
+            // 计算移除的路径数量
+            int removedCount = paths.Length - uniquePaths.Count;
+
             // 先记录当前光标位置
             int caretIndex = _pathsTextBox.CaretIndex;
 
@@ -243,8 +274,11 @@ namespace GitCommitsWPF.Services
               _pathsTextBox.CaretIndex = _pathsTextBox.Text.Length;
             }
 
-            // 使用临时警告框显示提示，不需要用户确认
-            _dialogManager.ShowTemporaryWarningMessageBox("警告", "已自动移除重复或空白的路径");
+            // 显示移除的路径数量
+            _dialogManager.ShowTemporaryWarningMessageBox("警告", $"已自动移除 {removedCount} 个重复或空白的路径");
+
+            // 输出详细日志
+            _outputManager.UpdateOutput($"路径检查: 从 {paths.Length} 个路径中移除了 {removedCount} 个重复或空白路径");
           }
         });
       }

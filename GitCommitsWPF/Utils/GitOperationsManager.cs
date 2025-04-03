@@ -448,8 +448,42 @@ namespace GitCommitsWPF.Utils
         // 处理日期范围
         if (string.IsNullOrEmpty(until))
         {
+          // Git的until参数是不包含当天的，所以需要使用明天的日期才能包含今天的提交
           until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd"); // 设置到明天来包含今天的提交
         }
+
+        // 特殊处理"今天"的情况，确保能获取到0点的提交
+        if (!string.IsNullOrEmpty(since) && DateTime.TryParse(since, out DateTime sinceDate))
+        {
+          // 如果since日期是今天，特殊处理确保获取所有提交
+          if (sinceDate.Date == DateTime.Today)
+          {
+            // 使用00:00:00作为开始时间
+            since = $"{sinceDate.ToString("yyyy-MM-dd")} 00:00:00";
+            await _outputManager.OutputInfoAsync($"检测到当天查询，设置精确开始时间: {since}");
+          }
+        }
+
+        // 如果until日期是明天，同样特殊处理
+        if (!string.IsNullOrEmpty(until) && DateTime.TryParse(until, out DateTime untilDate))
+        {
+          if (untilDate.Date == DateTime.Today.AddDays(1))
+          {
+            // 使用23:59:59作为结束时间确保包含所有提交
+            until = $"{DateTime.Today.ToString("yyyy-MM-dd")} 23:59:59";
+            await _outputManager.OutputInfoAsync($"检测到当天查询，设置精确结束时间: {until}");
+          }
+        }
+
+        // 记录实际使用的时间范围，以帮助调试
+        await _outputManager.OutputInfoAsync("实际使用的时间范围:");
+        await _outputManager.OutputInfoAsync($"- 开始日期(--since): {(string.IsNullOrEmpty(since) ? "全部" : since)}");
+        await _outputManager.OutputInfoAsync($"- 结束日期(--until): {until} (不包含当天)");
+
+        // 输出时间格式相关信息
+        await _outputManager.OutputInfoAsync("注意: Git日期格式处理方式是:");
+        await _outputManager.OutputInfoAsync("- --since参数是包含指定时间点的 (开始时间 >= since)");
+        await _outputManager.OutputInfoAsync("- --until参数是不包含指定时间点的 (结束时间 < until)");
 
         // 判断是否有筛选条件
         bool hasFilters = !string.IsNullOrEmpty(since) || !string.IsNullOrEmpty(until) ||
@@ -619,8 +653,8 @@ namespace GitCommitsWPF.Utils
 
           // 检查是否可以进行批量跳过大型仓库操作
           bool canSkipLargeRepos = !string.IsNullOrEmpty(since) &&
-                                  (DateTime.TryParse(since, out DateTime sinceDate) &&
-                                   (DateTime.Now - sinceDate).TotalDays <= 30); // 只针对近期时间范围执行优化
+                                  (DateTime.TryParse(since, out DateTime sinceDateForSkipping) &&
+                                   (DateTime.Now - sinceDateForSkipping).TotalDays <= 30); // 只针对近期时间范围执行优化
 
           await Task.Run(() =>
           {
@@ -703,8 +737,8 @@ namespace GitCommitsWPF.Utils
 
         // 检查是否可以使用轻量级模式
         bool useLightweightMode = !string.IsNullOrEmpty(since) &&
-                              (DateTime.TryParse(since, out DateTime scanSinceDate) &&
-                               (DateTime.Now - scanSinceDate).TotalDays <= 30);
+                              (DateTime.TryParse(since, out DateTime lightModeSinceDate) &&
+                               (DateTime.Now - lightModeSinceDate).TotalDays <= 30);
 
         if (useLightweightMode)
         {
@@ -787,17 +821,59 @@ namespace GitCommitsWPF.Utils
         // 收集所有提交
         commits = commitsBag.ToList();
 
-        // 按日期排序提交
-        if (commits.Count > 0)
+        // 增加仓库分组排序逻辑，确保同一仓库的提交保持在一起
+        await _outputManager.OutputInfoAsync("正在对提交记录进行分组和排序...");
+
+        // 先按仓库分组，确保同一仓库的提交保持在一起
+        var commitsByRepo = commits
+            .GroupBy(c => c.RepoPath ?? "Unknown")
+            .OrderBy(g => g.Key)
+            .ToList();
+
+        // 创建新的排序后的列表
+        List<CommitInfo> sortedCommits = new List<CommitInfo>();
+
+        // 对每个仓库组单独排序，然后添加到结果列表
+        foreach (var repoGroup in commitsByRepo)
         {
-          await _outputManager.OutputInfoAsync("正在对提交记录进行排序...");
-          commits = commits.OrderByDescending(c =>
+          string repoPath = repoGroup.Key;
+          // 该仓库的提交按日期降序排序
+          var repoCommitsSorted = repoGroup
+              .OrderByDescending(c =>
+              {
+                if (DateTime.TryParse(c.Date, out DateTime date))
+                  return date;
+                return DateTime.MinValue;
+              })
+              .ToList();
+
+          // 验证该仓库的所有提交是否有正确的仓库信息
+          string repoName = Path.GetFileName(repoPath);
+          foreach (var commit in repoCommitsSorted)
           {
-            if (DateTime.TryParse(c.Date, out DateTime date))
-              return date;
-            return DateTime.MinValue;
-          }).ToList();
+            if (string.IsNullOrEmpty(commit.Repository))
+            {
+              commit.Repository = repoName;
+            }
+            if (string.IsNullOrEmpty(commit.RepoPath))
+            {
+              commit.RepoPath = repoPath;
+            }
+            if (string.IsNullOrEmpty(commit.RepoFolder))
+            {
+              commit.RepoFolder = repoName;
+            }
+          }
+
+          // 添加到结果列表
+          sortedCommits.AddRange(repoCommitsSorted);
+
+          // 输出每个仓库的提交数量，帮助调试
+          await _outputManager.OutputInfoAsync($"仓库 '{repoName}' 有 {repoCommitsSorted.Count} 个提交");
         }
+
+        // 用排序后的列表替换原来的列表
+        commits = sortedCommits;
 
         // 找出最早的仓库创建日期
         DateTime? earliestRepoDate = null;
@@ -956,6 +1032,19 @@ namespace GitCommitsWPF.Utils
           {
             arguments += $" --author=\"{author}\"";
           }
+
+          // 输出完整git命令，帮助调试
+          _outputManager.OutputInfo($"执行Git命令: git {arguments}");
+
+          // 添加日期处理的详细日志
+          _outputManager.OutputInfo("---------- 日期处理详情 ----------");
+          _outputManager.OutputInfo(!string.IsNullOrEmpty(since)
+              ? $"开始日期参数: {since}"
+              : "未指定开始日期");
+          _outputManager.OutputInfo(!string.IsNullOrEmpty(until)
+              ? $"结束日期参数: {until}"
+              : "未指定结束日期");
+          _outputManager.OutputInfo("----------------------------------");
 
           // 执行Git命令
           var process = new Process
@@ -1213,17 +1302,57 @@ namespace GitCommitsWPF.Utils
 
         try
         {
+          // 记录当前仓库信息，确保不会丢失
+          string repoName = repo.Name;
+          string repoFullPath = repo.FullName;
+          string repoFolderName = Path.GetFileName(repo.FullName);
+
+          // 输出当前处理的仓库信息，帮助调试
+          _outputManager.OutputInfo($"开始处理仓库: {repoName} ({repoFullPath})");
+
+          // 输出时间范围信息，帮助跟踪问题
+          _outputManager.OutputInfo($"使用时间范围 - 开始: {(string.IsNullOrEmpty(since) ? "全部" : since)}, 结束: {(string.IsNullOrEmpty(until) ? "今天" : until)}");
+
           Directory.SetCurrentDirectory(repo.FullName);
 
           // 构建Git命令参数
           var arguments = "log";
 
+          // 处理开始日期参数 (since)
           if (!string.IsNullOrEmpty(since))
           {
-            arguments += $" --since=\"{since}\"";
+            string sinceParam = since;
+
+            // 如果since不包含具体时间，添加00:00:00确保包含整天
+            if (!since.Contains(":"))
+            {
+              sinceParam = $"{since} 00:00:00";
+            }
+
+            arguments += $" --since=\"{sinceParam}\"";
+            _outputManager.OutputInfo($"使用开始时间参数: --since=\"{sinceParam}\"");
           }
 
-          arguments += $" --until=\"{until}\"";
+          // 处理结束日期参数 (until)
+          if (!string.IsNullOrEmpty(until))
+          {
+            string untilParam = until;
+
+            // 如果until不包含具体时间，使用00:00:00
+            if (!until.Contains(":"))
+            {
+              DateTime parsedDate;
+              if (DateTime.TryParse(until, out parsedDate))
+              {
+                // 对于日期格式的until，使用整天的表示
+                untilParam = $"{until} 00:00:00";
+              }
+            }
+
+            arguments += $" --until=\"{untilParam}\"";
+            _outputManager.OutputInfo($"使用结束时间参数: --until=\"{untilParam}\"");
+          }
+
           arguments += $" --pretty=format:\"{gitFormat}\"";
           arguments += " --date=format:\"%Y-%m-%d %H:%M:%S\"";
 
@@ -1235,7 +1364,7 @@ namespace GitCommitsWPF.Utils
           if (isLargeRepo)
           {
             arguments += " -n500"; // 对大型仓库限制为前500个提交
-            _outputManager.OutputInfo($"对大型仓库 {repo.Name} 限制为最近500个提交");
+            _outputManager.OutputInfo($"对大型仓库 {repoName} 限制为最近500个提交");
           }
           else
           {
@@ -1259,6 +1388,19 @@ namespace GitCommitsWPF.Utils
             // 对普通仓库包含所有引用
             arguments += " --all";
           }
+
+          // 输出完整git命令，帮助调试
+          _outputManager.OutputInfo($"执行Git命令: git {arguments}");
+
+          // 添加日期处理的详细日志
+          _outputManager.OutputInfo("---------- 日期处理详情 ----------");
+          _outputManager.OutputInfo(!string.IsNullOrEmpty(since)
+              ? $"开始日期参数: {since}"
+              : "未指定开始日期");
+          _outputManager.OutputInfo(!string.IsNullOrEmpty(until)
+              ? $"结束日期参数: {until}"
+              : "未指定结束日期");
+          _outputManager.OutputInfo("----------------------------------");
 
           // 执行Git命令
           var process = new Process
@@ -1293,8 +1435,19 @@ namespace GitCommitsWPF.Utils
 
           process.WaitForExit();
 
+          // 检查是否有错误
+          string error = process.StandardError.ReadToEnd();
+          if (!string.IsNullOrEmpty(error))
+          {
+            _outputManager.OutputWarning($"Git命令执行时出现警告: {error}");
+          }
+
           // 创建仓库特定的并发集合，确保结果互不干扰
           ConcurrentBag<CommitInfo> repoSpecificCommitsBag = new ConcurrentBag<CommitInfo>();
+
+          // 记录处理的行数，帮助调试
+          int processedLines = 0;
+          int addedCommits = 0;
 
           Parallel.ForEach(lines, line =>
           {
@@ -1304,15 +1457,18 @@ namespace GitCommitsWPF.Utils
 
             try
             {
+              Interlocked.Increment(ref processedLines);
+
               var parts = line.Split('|');
               if (parts.Length >= gitFields.Count)
               {
                 // 创建一个提交信息对象，确保包含完整的仓库信息
                 var commitObj = new CommitInfo
                 {
-                  Repository = repo.Name,
-                  RepoPath = repo.FullName,
-                  RepoFolder = Path.GetFileName(repo.FullName)
+                  // 使用前面保存的仓库信息，确保始终一致
+                  Repository = repoName,
+                  RepoPath = repoFullPath,
+                  RepoFolder = repoFolderName
                 };
 
                 // 根据选择的字段添加属性
@@ -1339,6 +1495,41 @@ namespace GitCommitsWPF.Utils
                         break;
                     }
                   }
+                }
+
+                // 验证提交日期是否在指定范围内
+                bool isInDateRange = true;
+                if (!string.IsNullOrEmpty(since) || !string.IsNullOrEmpty(until))
+                {
+                  if (DateTime.TryParse(commitObj.Date, out DateTime commitDate))
+                  {
+                    // 检查开始日期范围
+                    if (!string.IsNullOrEmpty(since) && DateTime.TryParse(since, out DateTime sinceDate))
+                    {
+                      // since参数是包含当天的，所以判断 >= 
+                      if (commitDate < sinceDate)
+                      {
+                        isInDateRange = false;
+                      }
+                    }
+
+                    // 检查结束日期范围
+                    if (!string.IsNullOrEmpty(until) && DateTime.TryParse(until, out DateTime untilDate))
+                    {
+                      // until参数是不包含的，注意这里的判断是 >= (不包含until当天)
+                      // TimeRangeManager已经在传入时将日期+1天了，这里只需要检查是否达到了until日期
+                      if (commitDate >= untilDate)
+                      {
+                        isInDateRange = false;
+                      }
+                    }
+                  }
+                }
+
+                // 如果日期不在范围内，跳过此提交
+                if (!isInDateRange)
+                {
+                  return;
                 }
 
                 // 应用作者筛选
@@ -1376,17 +1567,48 @@ namespace GitCommitsWPF.Utils
                 if (shouldInclude)
                 {
                   repoSpecificCommitsBag.Add(commitObj);
+                  Interlocked.Increment(ref addedCommits);
                 }
               }
             }
-            catch
+            catch (Exception ex)
             {
-              // 忽略单条解析错误
+              // 记录解析错误但继续处理
+              _outputManager.OutputWarning($"解析提交行时出错: {ex.Message}");
             }
           });
 
-          // 转换为列表，确保是该仓库特定的结果集
+          // 转换为列表，并对提交按日期排序，确保每个仓库内部的时间顺序正确
           repoCommits = repoSpecificCommitsBag.ToList();
+
+          // 对提交按日期降序排序
+          repoCommits = repoCommits.OrderByDescending(c =>
+          {
+            if (DateTime.TryParse(c.Date, out DateTime date))
+              return date;
+            return DateTime.MinValue;
+          }).ToList();
+
+          // 输出处理统计信息
+          _outputManager.OutputInfo($"仓库 {repoName} 处理完成: 共处理 {processedLines} 行，添加 {addedCommits} 个提交");
+
+          // 再次验证所有提交的仓库信息是否正确
+          foreach (var commit in repoCommits)
+          {
+            // 确保没有空值
+            if (string.IsNullOrEmpty(commit.Repository))
+            {
+              commit.Repository = repoName;
+            }
+            if (string.IsNullOrEmpty(commit.RepoPath))
+            {
+              commit.RepoPath = repoFullPath;
+            }
+            if (string.IsNullOrEmpty(commit.RepoFolder))
+            {
+              commit.RepoFolder = repoFolderName;
+            }
+          }
         }
         finally
         {

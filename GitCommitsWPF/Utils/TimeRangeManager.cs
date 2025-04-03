@@ -78,8 +78,13 @@ namespace GitCommitsWPF.Utils
             _endDatePicker.IsEnabled = false;
             break;
           case "month":
-            _startDatePicker.SelectedDate = DateTime.Today.AddMonths(-1);
-            _endDatePicker.SelectedDate = DateTime.Today;
+            // 计算当月第一天和最后一天
+            DateTime currentDate = DateTime.Today;
+            DateTime firstDayOfMonth = new DateTime(currentDate.Year, currentDate.Month, 1);
+            DateTime lastDayOfMonth = firstDayOfMonth.AddMonths(1).AddDays(-1);
+
+            _startDatePicker.SelectedDate = firstDayOfMonth;
+            _endDatePicker.SelectedDate = lastDayOfMonth;
             _startDatePicker.IsEnabled = false;
             _endDatePicker.IsEnabled = false;
             break;
@@ -150,16 +155,20 @@ namespace GitCommitsWPF.Utils
       {
         case "day":
           // 使用指定的startDate，如果为null则使用当天
-          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.ToString("yyyy-MM-dd");
-          // 使用指定的endDate，如果为null则使用当天
-          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
+          DateTime todayDate = startDate?.Date ?? DateTime.Today;
+          // 设置为当天开始的00:00:00
+          since = $"{todayDate.ToString("yyyy-MM-dd")} 00:00:00";
+
+          // 设置为次日开始的00:00:00 (Git的until不包含当天，所以必须设为下一天)
+          until = $"{todayDate.AddDays(1).ToString("yyyy-MM-dd")} 00:00:00";
           break;
         case "week":
           if (startDate.HasValue && endDate.HasValue)
           {
             // 使用用户选择的日期范围
-            since = startDate.Value.ToString("yyyy-MM-dd");
-            until = endDate.Value.AddDays(1).ToString("yyyy-MM-dd"); // 增加一天以包括结束日期
+            since = $"{startDate.Value.ToString("yyyy-MM-dd")} 00:00:00";
+            // 增加一天以包括结束日期当天的所有提交
+            until = $"{endDate.Value.AddDays(1).ToString("yyyy-MM-dd")} 00:00:00";
           }
           else
           {
@@ -167,36 +176,65 @@ namespace GitCommitsWPF.Utils
             DateTime today = DateTime.Today;
             int daysUntilMonday = ((int)today.DayOfWeek == 0 ? 7 : (int)today.DayOfWeek) - 1;
             DateTime monday = today.AddDays(-daysUntilMonday);
+            // 本周日再加1天，确保包含本周日所有提交
             DateTime nextMonday = monday.AddDays(7);
 
-            since = monday.ToString("yyyy-MM-dd");
-            until = nextMonday.ToString("yyyy-MM-dd");
+            since = $"{monday.ToString("yyyy-MM-dd")} 00:00:00";
+            until = $"{nextMonday.ToString("yyyy-MM-dd")} 00:00:00";
           }
           break;
         case "month":
-          // 使用指定的startDate，如果为null则使用1个月前
-          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.AddMonths(-1).ToString("yyyy-MM-dd");
-          // 使用指定的endDate，如果为null则使用当天
-          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
+          if (startDate.HasValue && endDate.HasValue)
+          {
+            // 使用用户选择的日期范围
+            since = $"{startDate.Value.ToString("yyyy-MM-dd")} 00:00:00";
+            // 增加一天以包括结束日期当天的所有提交
+            until = $"{endDate.Value.AddDays(1).ToString("yyyy-MM-dd")} 00:00:00";
+          }
+          else
+          {
+            // 计算当月第一天和下月第一天
+            DateTime currentDate = DateTime.Today;
+            DateTime firstDayOfMonth = new DateTime(currentDate.Year, currentDate.Month, 1);
+            // 下月第一天，确保包含本月最后一天所有提交
+            DateTime firstDayOfNextMonth = firstDayOfMonth.AddMonths(1);
+
+            since = $"{firstDayOfMonth.ToString("yyyy-MM-dd")} 00:00:00";
+            until = $"{firstDayOfNextMonth.ToString("yyyy-MM-dd")} 00:00:00";
+          }
           break;
         case "year":
-          // 使用指定的startDate，如果为null则使用1年前
-          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.AddYears(-1).ToString("yyyy-MM-dd");
-          // 使用指定的endDate，如果为null则使用当天
-          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
+          if (startDate.HasValue && endDate.HasValue)
+          {
+            // 使用用户选择的日期范围
+            since = $"{startDate.Value.ToString("yyyy-MM-dd")} 00:00:00";
+            // 增加一天以包括结束日期当天的所有提交
+            until = $"{endDate.Value.AddDays(1).ToString("yyyy-MM-dd")} 00:00:00";
+          }
+          else
+          {
+            // 使用指定的startDate，如果为null则使用1年前
+            DateTime oneYearAgo = startDate?.Date ?? DateTime.Today.AddYears(-1);
+            since = $"{oneYearAgo.ToString("yyyy-MM-dd")} 00:00:00";
+
+            // 使用指定的endDate，如果为null则使用当天+1
+            DateTime endDay = endDate?.Date ?? DateTime.Today;
+            until = $"{endDay.AddDays(1).ToString("yyyy-MM-dd")} 00:00:00";
+          }
           break;
         case "custom":
           if (startDate.HasValue)
           {
-            since = startDate.Value.ToString("yyyy-MM-dd");
+            since = $"{startDate.Value.ToString("yyyy-MM-dd")} 00:00:00";
           }
           if (endDate.HasValue)
           {
-            // Git的--until参数是不包含当天的，所以我们需要加1天
-            until = endDate.Value.AddDays(1).ToString("yyyy-MM-dd");
+            // Git的--until参数是不包含当天的，所以我们需要加1天来包含结束日期当天的提交
+            until = $"{endDate.Value.AddDays(1).ToString("yyyy-MM-dd")} 00:00:00";
           }
           break;
         default: // "all"
+          // 所有时间不设置时间范围限制
           break;
       }
 
