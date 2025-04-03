@@ -68,7 +68,7 @@ namespace GitCommitsWPF.Services
         string author,
         string authorFilter,
         bool verifyGitPaths,
-        Func<bool, bool, bool, bool, bool, bool, bool, List<string>> getSelectedFieldsFunc,
+        Func<List<string>> getSelectedFieldsFunc,
         Func<string> getFormatText,
         Func<bool> getShowRepeatedRepoNames,
         Func<bool> getEnableStats,
@@ -164,38 +164,13 @@ namespace GitCommitsWPF.Services
       // 获取路径列表
       var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
 
-      // 计算日期范围
-      string since = "";
-      string until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd"); // 设置到明天来包含今天的提交
+      // 使用TimeRangeManager转换时间参数
+      var (since, until) = TimeRangeManager.ConvertToGitTimeArgs(timeRange, startDate, endDate);
 
-      switch (timeRange)
+      // 如果until为空，设置为明天的日期，确保包含今天的提交
+      if (string.IsNullOrEmpty(until))
       {
-        case "day":
-          since = DateTime.Today.ToString("yyyy-MM-dd");
-          break;
-        case "week":
-          // 找到本周的星期一
-          var startOfWeek = DateTime.Today.AddDays(-(int)DateTime.Today.DayOfWeek + 1);
-          if (startOfWeek.DayOfWeek == DayOfWeek.Sunday) // 如果是周日，回退到上周一
-            startOfWeek = startOfWeek.AddDays(-6);
-          since = startOfWeek.ToString("yyyy-MM-dd");
-          break;
-        case "month":
-          // 本月第一天
-          since = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1).ToString("yyyy-MM-dd");
-          break;
-        case "custom":
-          if (startDate.HasValue && endDate.HasValue)
-          {
-            since = startDate.Value.ToString("yyyy-MM-dd");
-            // 设置结束日期为第二天，以包含结束当天的提交
-            until = endDate.Value.AddDays(1).ToString("yyyy-MM-dd");
-          }
-          break;
-        case "all":
-          // 不设置since，从仓库创建开始
-          since = "";
-          break;
+        until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd");
       }
 
       // 使用GitOperationsManager异步收集Git提交
@@ -206,7 +181,7 @@ namespace GitCommitsWPF.Services
     /// 显示查询结果
     /// </summary>
     private void ShowResults(
-        Func<bool, bool, bool, bool, bool, bool, bool, List<string>> getSelectedFieldsFunc,
+        Func<List<string>> getSelectedFieldsFunc,
         Func<string> getFormatText,
         Func<bool> getShowRepeatedRepoNames,
         Func<bool> getEnableStats,
@@ -247,7 +222,7 @@ namespace GitCommitsWPF.Services
       List<string> selectedFields = new List<string>();
       Application.Current.Dispatcher.Invoke(() =>
       {
-        selectedFields = getSelectedFieldsFunc(true, true, true, true, true, true, true);
+        selectedFields = getSelectedFieldsFunc();
 
         // 使用DataGridManager更新数据源
         _dataGridManager.UpdateDataSource(_allCommits);

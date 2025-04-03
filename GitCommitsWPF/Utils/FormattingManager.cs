@@ -91,31 +91,6 @@ namespace GitCommitsWPF.Utils
     }
 
     /// <summary>
-    /// 获取选中字段的列表
-    /// </summary>
-    public List<string> GetSelectedFields(
-        bool includeRepository,
-        bool includeRepoPath,
-        bool includeRepoFolder,
-        bool includeCommitId,
-        bool includeAuthor,
-        bool includeDate,
-        bool includeMessage)
-    {
-      List<string> selectedFields = new List<string>();
-
-      if (includeRepository) selectedFields.Add("Repository");
-      if (includeRepoPath) selectedFields.Add("RepoPath");
-      if (includeRepoFolder) selectedFields.Add("RepoFolder");
-      if (includeCommitId) selectedFields.Add("CommitId");
-      if (includeAuthor) selectedFields.Add("Author");
-      if (includeDate) selectedFields.Add("Date");
-      if (includeMessage) selectedFields.Add("Message");
-
-      return selectedFields;
-    }
-
-    /// <summary>
     /// 组合统计数据和格式化结果
     /// </summary>
     /// <param name="statsOutput">统计输出</param>

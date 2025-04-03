@@ -139,7 +139,7 @@
                                 </Grid.ColumnDefinitions>
 
                                 <TextBlock Grid.Row="0" Grid.Column="0" Text="时间选择：" VerticalAlignment="Center"/>
-                                <ComboBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" x:Name="TimeRangeComboBox" SelectionChanged="TimeRangeComboBox_SelectionChanged">
+                                <ComboBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" x:Name="TimeRangeComboBox">
                                     <ComboBoxItem Content="所有时间" Tag="all"/>
                                     <ComboBoxItem Content="今天" Tag="day"/>
                                     <ComboBoxItem Content="本周" Tag="week"/>

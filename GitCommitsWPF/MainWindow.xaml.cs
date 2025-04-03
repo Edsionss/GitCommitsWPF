@@ -80,17 +80,18 @@ namespace GitCommitsWPF
     // AuthorDialogManager实例，用于管理作者选择对话框相关功能
     private AuthorDialogManager _authorDialogManager;
 
+    // TimeRangeManager实例，用于管理时间范围选择相关功能
+    private TimeRangeManager _timeRangeManager = new TimeRangeManager();
+
+    // FieldSelectionManager实例，用于管理字段选择相关功能
+    private FieldSelectionManager _fieldSelectionManager = new FieldSelectionManager();
+
     public MainWindow()
     {
       InitializeComponent();
 
       // 设置默认值
-      TimeRangeComboBox.SelectedIndex = 0; // 默认选择'所有时间'
       FormatTextBox.Text = "{Repository} : {Message}";
-
-      // 设置日期选择器为当前日期
-      StartDatePicker.SelectedDate = DateTime.Today;
-      EndDatePicker.SelectedDate = DateTime.Today;
 
       // 初始化输出管理器
       _outputManager = new OutputManager(ResultTextBox, ProgressBar, Dispatcher);
@@ -143,6 +144,19 @@ namespace GitCommitsWPF
         _authorManager,
         _dialogManager,
         _gitOperationsManager);
+
+      // 初始化时间范围管理器
+      _timeRangeManager.Initialize(TimeRangeComboBox, StartDatePicker, EndDatePicker);
+
+      // 初始化字段选择管理器
+      _fieldSelectionManager.Initialize(
+        RepositoryFieldCheckBox,
+        RepoPathFieldCheckBox,
+        RepoFolderFieldCheckBox,
+        CommitIdFieldCheckBox,
+        AuthorFieldCheckBox,
+        DateFieldCheckBox,
+        MessageFieldCheckBox);
 
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
@@ -225,27 +239,14 @@ namespace GitCommitsWPF
       _pathBrowserManager.SelectOutputPath(OutputPathTextBox);
     }
 
-    private void TimeRangeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-      var selectedItem = TimeRangeComboBox.SelectedItem as ComboBoxItem;
-      if (selectedItem != null)
-      {
-        var timeRange = selectedItem.Tag.ToString();
-        // 仅在选择"custom"时启用日期选择器
-        bool isCustom = timeRange == "custom";
-        StartDatePicker.IsEnabled = isCustom;
-        EndDatePicker.IsEnabled = isCustom;
-      }
-    }
-
     // 开始按钮点击事件处理
     private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
       // 设置执行状态并获取所需参数
       string pathsText = PathsTextBox.Text;
-      string timeRange = ((ComboBoxItem)TimeRangeComboBox.SelectedItem).Tag.ToString();
-      DateTime? startDate = StartDatePicker.SelectedDate;
-      DateTime? endDate = EndDatePicker.SelectedDate;
+      string timeRange = _timeRangeManager.GetSelectedTimeRange();
+      DateTime? startDate = _timeRangeManager.GetStartDate();
+      DateTime? endDate = _timeRangeManager.GetEndDate();
       string author = AuthorTextBox.Text;
       string authorFilter = AuthorFilterTextBox.Text;
       bool verifyGitPaths = VerifyGitPathsCheckBox.IsChecked == true;
@@ -260,15 +261,7 @@ namespace GitCommitsWPF
         authorFilter,
         verifyGitPaths,
         // 获取选择的字段
-        (repository, repoPath, repoFolder, commitId, author1, date, message) =>
-          _formattingManager.GetSelectedFields(
-            repository,
-            repoPath,
-            repoFolder,
-            commitId,
-            author1,
-            date,
-            message),
+        () => _fieldSelectionManager.GetSelectedFields(),
         // 获取格式文本
         () => FormatTextBox.Text,
         // 获取是否显示重复的仓库名
@@ -391,15 +384,8 @@ namespace GitCommitsWPF
         // 获取是否包含统计信息
         bool includeStats = EnableStatsCheckBox.IsChecked == true;
 
-        // 获取选择的字段
-        List<string> selectedFields = new List<string>();
-        if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
-        if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
-        if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
-        if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
-        if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
-        if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
-        if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
+        // 获取选择的字段 - 使用FieldSelectionManager
+        List<string> selectedFields = _fieldSelectionManager.GetSelectedFields();
 
         // 复制结果到剪贴板
         _exportManager.CopyResultToClipboard(_filteredCommits, statsOutput, includeStats, formatTemplate, selectedFields);
@@ -435,15 +421,8 @@ namespace GitCommitsWPF
         // 获取是否包含统计信息
         bool includeStats = EnableStatsCheckBox.IsChecked == true;
 
-        // 获取选择的字段
-        List<string> selectedFields = new List<string>();
-        if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
-        if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
-        if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
-        if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
-        if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
-        if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
-        if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
+        // 获取选择的字段 - 使用FieldSelectionManager
+        List<string> selectedFields = _fieldSelectionManager.GetSelectedFields();
 
         // 保存结果
         _exportManager.SaveResults(outputPath, _filteredCommits, statsOutput, includeStats, formatTemplate, selectedFields);
@@ -460,15 +439,8 @@ namespace GitCommitsWPF
       var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
       if (formattedResultTextBox != null)
       {
-        // 获取选择的字段
-        List<string> selectedFields = _formattingManager.GetSelectedFields(
-            RepositoryFieldCheckBox.IsChecked == true,
-            RepoPathFieldCheckBox.IsChecked == true,
-            RepoFolderFieldCheckBox.IsChecked == true,
-            CommitIdFieldCheckBox.IsChecked == true,
-            AuthorFieldCheckBox.IsChecked == true,
-            DateFieldCheckBox.IsChecked == true,
-            MessageFieldCheckBox.IsChecked == true);
+        // 获取选择的字段 - 使用FieldSelectionManager
+        List<string> selectedFields = _fieldSelectionManager.GetSelectedFields();
 
         // 生成统计数据(如果启用)
         var statsOutput = new StringBuilder();
