@@ -219,8 +219,47 @@ namespace GitCommitsWPF.Utils
         }
 
         // 复制到剪贴板
-        Clipboard.SetText(formattedContent);
-        _dialogManager.ShowCustomMessageBox("复制成功", "结果已复制到剪贴板", false);
+        try
+        {
+          // 创建可重试的剪贴板复制逻辑，多次尝试以解决剪贴板可能被其他程序占用的情况
+          int maxRetries = 5;
+          int retryDelayMs = 100;
+          Exception lastException = null;
+
+          for (int retry = 0; retry < maxRetries; retry++)
+          {
+            try
+            {
+              if (retry > 0)
+              {
+                System.Threading.Thread.Sleep(retryDelayMs * retry); // 增加重试等待时间
+              }
+
+              // 先清空剪贴板，再设置文本
+              System.Windows.Clipboard.Clear();
+              System.Windows.Clipboard.SetDataObject(formattedContent, true);
+              lastException = null;
+              break; // 成功则跳出循环
+            }
+            catch (Exception ex)
+            {
+              lastException = ex;
+              // 继续重试，除非已达到最大重试次数
+            }
+          }
+
+          // 检查是否最终失败
+          if (lastException != null)
+          {
+            throw lastException;
+          }
+
+          _dialogManager.ShowCustomMessageBox("复制成功", "结果已复制到剪贴板", false);
+        }
+        catch (Exception ex)
+        {
+          _dialogManager.ShowCustomMessageBox("复制失败", $"复制到剪贴板时出错: {ex.Message}", false);
+        }
       }
       catch (Exception ex)
       {

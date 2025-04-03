@@ -37,13 +37,12 @@ namespace GitCommitsWPF
     private int _currentRepo = 0;
     private bool _isRunning = false;
     private List<CommitInfo> _filteredCommits = new List<CommitInfo>(); // 添加筛选后的提交列表
-    private string _tempScanPath = ""; // 用于保存临时扫描路径
 
     // AuthorManager实例，用于管理作者相关功能
     private AuthorManager _authorManager = new AuthorManager();
 
     // LocationManager实例，用于管理位置相关功能
-    private LocationManager _locationManager = new LocationManager();
+    private LocationManager _locationManager;
 
     // OutputManager实例，用于管理输出和进度条
     private OutputManager _outputManager;
@@ -75,6 +74,9 @@ namespace GitCommitsWPF
     // QueryExecutionManager实例，用于管理查询执行和结果处理
     private QueryExecutionManager _queryExecutionManager;
 
+    // PathBrowserManager实例，用于管理路径选择和位置管理的UI交互
+    private PathBrowserManager _pathBrowserManager;
+
     public MainWindow()
     {
       InitializeComponent();
@@ -93,6 +95,9 @@ namespace GitCommitsWPF
       // 初始化对话框管理器
       _dialogManager = new DialogManager(this);
 
+      // 初始化LocationManager
+      _locationManager = new LocationManager();
+
       // 初始化日志操作管理器
       _logOperationsManager = new LogOperationsManager(_dialogManager, _outputManager);
 
@@ -104,7 +109,9 @@ namespace GitCommitsWPF
 
       // 初始化DataGrid管理器
       _dataGridManager = new DataGridManager(_dialogManager);
-      _dataGridManager.Initialize(CommitsDataGrid, ShowCustomMessageBox, () => FormatTextBox.Text);
+      _dataGridManager.Initialize(CommitsDataGrid,
+        (title, message, isSuccess) => _dialogManager.ShowCustomMessageBox(title, message, isSuccess, null),
+        () => FormatTextBox.Text);
 
       // 初始化查询执行管理器
       _queryExecutionManager = new QueryExecutionManager(
@@ -114,6 +121,18 @@ namespace GitCommitsWPF
         _statisticsManager,
         _formattingManager,
         _dataGridManager);
+
+      // 初始化路径浏览管理器
+      _pathBrowserManager = new PathBrowserManager(
+        this,
+        _dialogManager,
+        _locationManager,
+        _gitOperationsManager,
+        _outputManager);
+      _pathBrowserManager.Initialize(
+        PathsTextBox,
+        VerifyGitPathsCheckBox,
+        ChooseSystemCheckBox);
 
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
@@ -183,106 +202,18 @@ namespace GitCommitsWPF
     // 验证路径是否为Git仓库
     private bool ValidatePath(string path)
     {
-      bool verifyGitPaths = false;
-      Dispatcher.Invoke(() =>
-      {
-        verifyGitPaths = VerifyGitPathsCheckBox.IsChecked == true;
-      });
-
-      return _gitOperationsManager.ValidatePath(path, verifyGitPaths);
+      return _pathBrowserManager.ValidatePath(path);
     }
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)
     {
-      bool ChooseSystemCheck = ChooseSystemCheckBox.IsChecked == true;
-
-      if (ChooseSystemCheck)
-      {
-        // 使用系统文件窗口 (FolderBrowserDialog)
-        var dialog = new FolderBrowserDialog
-        {
-          Description = "选择要扫描Git仓库的路径",
-          ShowNewFolderButton = false
-        };
-
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-        {
-          string selectedPath = dialog.SelectedPath;
-
-          // 验证路径（如果启用了验证）
-          if (ValidatePath(selectedPath))
-          {
-            // 添加选择的路径到文本框
-            if (!string.IsNullOrEmpty(PathsTextBox.Text))
-            {
-              PathsTextBox.Text += Environment.NewLine;
-            }
-            PathsTextBox.Text += selectedPath;
-
-            // 添加到最近位置
-            AddToRecentLocations(selectedPath);
-            // 确保保存最近位置
-            SaveRecentLocations();
-          }
-        }
-      }
-      else
-      {
-        // 使用微软窗口 (OpenFileDialog)
-        var dialog = new OpenFileDialog
-        {
-          Title = "选择要扫描Git仓库的文件夹",
-          ValidateNames = false,
-          CheckFileExists = false,
-          CheckPathExists = true,
-          FileName = "选择此文件夹",
-          // 将过滤器设置为目录
-          Filter = "文件夹|*.this.directory"
-        };
-
-        if (dialog.ShowDialog() == true)
-        {
-          // 从文件路径中获取文件夹路径
-          string selectedPath = Path.GetDirectoryName(dialog.FileName);
-
-          // 验证路径（如果启用了验证）
-          if (ValidatePath(selectedPath))
-          {
-            // 添加选择的路径到文本框
-            if (!string.IsNullOrEmpty(PathsTextBox.Text))
-            {
-              PathsTextBox.Text += Environment.NewLine;
-            }
-            PathsTextBox.Text += selectedPath;
-
-            // 添加到最近位置
-            AddToRecentLocations(selectedPath);
-            // 确保保存最近位置
-            SaveRecentLocations();
-          }
-        }
-      }
+      _pathBrowserManager.BrowseFolder();
     }
 
     private void OutputPathButton_Click(object sender, RoutedEventArgs e)
     {
-      // 创建默认文件名：Git提交记录_年月日.csv
-      string defaultFileName = string.Format("Git提交记录_{0}.txt", DateTime.Now.ToString("yyyyMMdd"));
-      var dialog = new SaveFileDialog
-      {
-        Title = "保存结果",
-        Filter = "*.txt|*.csv|JSON文件|*.json|文本文件|CSV文件|HTML文件|*.html|XML文件|*.xml|所有文件|*.*",
-        DefaultExt = ".txt",
-        FileName = defaultFileName,
-
-      };
-
-      if (dialog.ShowDialog() == true)
-      {
-        OutputPathTextBox.Text = dialog.FileName;
-      }
+      _pathBrowserManager.SelectOutputPath(OutputPathTextBox);
     }
-
 
     private void TimeRangeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -349,10 +280,14 @@ namespace GitCommitsWPF
             formattedResultTextBox.Text = textBox.Text;
           }
         },
-        // 启用开始按钮
+        // 禁用开始按钮
         () => StartButton.IsEnabled = false,
         // 启用停止按钮
         () => StopButton.IsEnabled = true,
+        // 禁用停止按钮
+        () => StopButton.IsEnabled = false,
+        // 启用开始按钮
+        () => StartButton.IsEnabled = true,
         // 启用保存按钮
         () => SaveButton.IsEnabled = true,
         // 清空搜索框
@@ -599,127 +534,19 @@ namespace GitCommitsWPF
     // 添加最近位置按钮点击事件
     private void AddRecentLocation_Click(object sender, RoutedEventArgs e)
     {
-      if (_locationManager.RecentLocations.Count == 0)
+      _pathBrowserManager.ShowRecentLocationsDialog(selectedPath =>
       {
-        ShowCustomMessageBox("信息", "没有最近的位置记录。", false);
-        return;
-      }
-
-      // 创建一个选择窗口
-      var selectWindow = new Window
-      {
-        Title = "选择最近位置",
-        Width = 500,
-        Height = 300,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize
-      };
-
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 列表框，显示最近的位置
-      var listBox = new ListBox
-      {
-        Margin = new Thickness(10),
-        ItemsSource = _locationManager.RecentLocations
-      };
-      Grid.SetRow(listBox, 0);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 10)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 添加按钮
-      var addButton = new Button
-      {
-        Content = "添加",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      addButton.Click += (s, evt) =>
-      {
-        if (listBox.SelectedItem is string selectedPath)
+        if (!string.IsNullOrEmpty(PathsTextBox.Text))
         {
-          if (!string.IsNullOrEmpty(PathsTextBox.Text))
-          {
-            PathsTextBox.Text += Environment.NewLine;
-          }
-          PathsTextBox.Text += selectedPath;
-
-          // 确保路径被添加到最近位置并保存
-          AddToRecentLocations(selectedPath);
-          SaveRecentLocations();
-
-          selectWindow.Close();
+          PathsTextBox.Text += Environment.NewLine;
         }
-        else
-        {
-          ShowCustomMessageBox("提示", "请先选择一个位置", false);
-        }
-      };
-
-      // 清除按钮
-      var clearButton = new Button
-      {
-        Content = "清除记录",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      clearButton.Click += (s, evt) =>
-      {
-        _locationManager.ClearRecentLocations();
-        selectWindow.Close();
-        ShowCustomMessageBox("信息", "已清除最近位置记录。", false);
-      };
-
-      // 取消按钮
-      var cancelButton = new Button
-      {
-        Content = "取消",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      cancelButton.Click += (s, evt) =>
-      {
-        selectWindow.Close();
-      };
-
-      buttonPanel.Children.Add(addButton);
-      buttonPanel.Children.Add(clearButton);
-      buttonPanel.Children.Add(cancelButton);
-      grid.Children.Add(listBox);
-      grid.Children.Add(buttonPanel);
-
-      selectWindow.Content = grid;
-      selectWindow.ShowDialog();
+        PathsTextBox.Text += selectedPath;
+      });
     }
 
     private void ClearPaths_Click(object sender, RoutedEventArgs e)
     {
-      if (string.IsNullOrEmpty(PathsTextBox.Text))
-      {
-        ShowCustomMessageBox("信息", "路径已为空。", false);
-        return;
-      }
-
-      if (ShowCustomConfirmDialog("确认", "确定要清空所有路径吗？"))
-      {
-        PathsTextBox.Text = "";
-      }
+      _pathBrowserManager.ClearPaths();
     }
 
     // 用于确认操作的自定义对话框
@@ -793,21 +620,7 @@ namespace GitCommitsWPF
       _dataGridManager.UpdateDataSource(_filteredCommits);
 
       // 显示筛选结果
-      ShowCustomMessageBox("筛选结果", _searchFilterManager.GetFilterStats(_filteredCommits), false);
-    }
-
-    // 显示自定义消息窗口，如果是保存成功消息，则提供打开文件选项
-    private void ShowCustomMessageBox(string title, string message, bool isSuccess)
-    {
-      string filePath = isSuccess ? OutputPathTextBox.Text : null;
-
-      // 如果是成功消息且有文件路径，添加到最近保存位置
-      if (isSuccess && !string.IsNullOrEmpty(filePath))
-      {
-        _locationManager.AddToSaveLocations(filePath);
-      }
-
-      _dialogManager.ShowCustomMessageBox(title, message, isSuccess, filePath);
+      _dialogManager.ShowCustomMessageBox("筛选结果", _searchFilterManager.GetFilterStats(_filteredCommits), false);
     }
 
     // 加载最近保存的位置
@@ -830,130 +643,7 @@ namespace GitCommitsWPF
 
     private void LoadLastPath_Click(object sender, RoutedEventArgs e)
     {
-      if (_locationManager.SaveLocations.Count == 0)
-      {
-        ShowCustomMessageBox("信息", "没有最近的保存位置记录。", false);
-        return;
-      }
-
-      // 创建一个选择窗口
-      var selectWindow = new Window
-      {
-        Title = "选择最近保存位置",
-        Width = 500,
-        Height = 300,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize
-      };
-
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 列表框，显示最近的保存位置
-      var listBox = new ListBox
-      {
-        Margin = new Thickness(10),
-        ItemsSource = _locationManager.SaveLocations
-      };
-      Grid.SetRow(listBox, 0);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 10)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 添加按钮
-      var addButton = new Button
-      {
-        Content = "使用",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      addButton.Click += (s, evt) =>
-      {
-        if (listBox.SelectedItem is string selectedPath)
-        {
-          // 验证文件路径是否存在
-          if (File.Exists(selectedPath))
-          {
-            // 如果存在，则将路径的文件名中的日期替换成当前日期
-            string newPath = Path.Combine(Path.GetDirectoryName(selectedPath), "GIT提交记录查询结果" + DateTime.Now.ToString("yyyyMMdd") + Path.GetExtension(selectedPath));
-            // OutputPathTextBox.Text = Path.Combine(Path.GetDirectoryName(selectedPath), DateTime.Now.ToString("yyyyMMdd") + Path.GetExtension(selectedPath));
-            if (File.Exists(newPath))
-            {
-              ShowCustomMessageBox("提示", "文件已存在，请选择其他保存位置。", false);
-              return;
-            }
-            else
-            {
-              OutputPathTextBox.Text = newPath;
-            }
-
-            // 确保将选择的路径添加到最近保存位置并保存
-            AddToSaveLocations(selectedPath);
-            SaveSaveLocations();
-
-            selectWindow.Close();
-          }
-          else
-          {
-            ShowCustomMessageBox("提示", "文件路径不存在", false);
-          }
-        }
-        else
-        {
-          ShowCustomMessageBox("提示", "请先选择一个保存位置", false);
-        }
-      };
-
-      // 清除按钮
-      var clearButton = new Button
-      {
-        Content = "清除记录",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      clearButton.Click += (s, evt) =>
-      {
-        _locationManager.ClearSaveLocations();
-        selectWindow.Close();
-        ShowCustomMessageBox("信息", "已清除最近保存位置记录。", false);
-      };
-
-      // 取消按钮
-      var cancelButton = new Button
-      {
-        Content = "取消",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      cancelButton.Click += (s, evt) =>
-      {
-        selectWindow.Close();
-      };
-
-      buttonPanel.Children.Add(addButton);
-      buttonPanel.Children.Add(clearButton);
-      buttonPanel.Children.Add(cancelButton);
-
-      // 确保将listBox和buttonPanel添加到grid中
-      grid.Children.Add(listBox);
-      grid.Children.Add(buttonPanel);
-
-      selectWindow.Content = grid;
-      selectWindow.ShowDialog();
+      _pathBrowserManager.ShowRecentSaveLocationsDialog(OutputPathTextBox);
     }
 
     // [该方法未使用，可以移除] 复选框的勾选事件在BrowseButton_Click方法中已处理
@@ -979,9 +669,9 @@ namespace GitCommitsWPF
         if (string.IsNullOrWhiteSpace(pathsText))
         {
           // 清空临时扫描路径
-          _tempScanPath = "";
+          _pathBrowserManager.ClearTempScanPath();
 
-          bool shouldContinue = ShowGitPathConfirmDialog();
+          bool shouldContinue = _pathBrowserManager.ShowGitPathConfirmDialog();
           if (!shouldContinue)
           {
             // 用户选择取消查找
@@ -990,7 +680,7 @@ namespace GitCommitsWPF
           }
 
           // 检查临时扫描路径是否已设置
-          if (string.IsNullOrWhiteSpace(_tempScanPath))
+          if (string.IsNullOrWhiteSpace(_pathBrowserManager.TempScanPath))
           {
             // 仍然没有路径，取消操作
             if (button != null) button.IsEnabled = true;
@@ -998,7 +688,7 @@ namespace GitCommitsWPF
           }
 
           // 使用_tempScanPath进行扫描
-          paths.Add(_tempScanPath);
+          paths.Add(_pathBrowserManager.TempScanPath);
         }
         else
         {
@@ -1026,218 +716,22 @@ namespace GitCommitsWPF
         }
         else
         {
-          ShowCustomMessageBox("提示", "未找到任何Git作者信息", false);
+          _dialogManager.ShowCustomMessageBox("提示", "未找到任何Git作者信息", false);
         }
       }
       catch (Exception ex)
       {
         UpdateOutput(string.Format("获取Git作者信息时出错: {0}", ex.Message));
-        ShowCustomMessageBox("错误", string.Format("获取Git作者信息时出错: {0}", ex.Message), false);
+        _dialogManager.ShowCustomMessageBox("错误", string.Format("获取Git作者信息时出错: {0}", ex.Message), false);
       }
       finally
       {
         // 恢复按钮状态
         if (button != null) button.IsEnabled = true;
         // 清空临时扫描路径
-        _tempScanPath = "";
+        _pathBrowserManager.ClearTempScanPath();
         _isRunning = false;
       }
-    }
-
-    // 显示Git路径确认对话框
-    private bool ShowGitPathConfirmDialog()
-    {
-      bool result = false;
-
-      // 创建确认窗口
-      var confirmWindow = new Window
-      {
-        Title = "未找到Git路径",
-        Width = 400,
-        Height = 200,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize,
-        Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#f0f0f0"))
-      };
-
-      // 创建内容面板
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 消息文本
-      var messageText = new TextBlock
-      {
-        Text = "您没有填写Git路径，无法查找Git作者信息。",
-        Margin = new Thickness(20, 20, 20, 10),
-        TextWrapping = TextWrapping.Wrap,
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center
-      };
-      Grid.SetRow(messageText, 0);
-      grid.Children.Add(messageText);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 10, 0, 20)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 选择最近路径按钮
-      var selectPathButton = new Button
-      {
-        Content = "选择最近路径",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(10),
-        MinWidth = 120
-      };
-
-      selectPathButton.Click += (s, e) =>
-      {
-        confirmWindow.Close();
-        result = ShowRecentPathSelectionDialog();
-      };
-
-      // 取消查找按钮
-      var cancelButton = new Button
-      {
-        Content = "取消查找",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(10),
-        MinWidth = 100
-      };
-
-      cancelButton.Click += (s, e) =>
-      {
-        result = false;
-        confirmWindow.Close();
-      };
-
-      buttonPanel.Children.Add(selectPathButton);
-      buttonPanel.Children.Add(cancelButton);
-      grid.Children.Add(buttonPanel);
-
-      confirmWindow.Content = grid;
-      confirmWindow.ShowDialog();
-
-      return result;
-    }
-
-    // 显示最近路径选择对话框，带有红色提示信息
-    private bool ShowRecentPathSelectionDialog()
-    {
-      if (_locationManager.RecentLocations.Count == 0)
-      {
-        ShowCustomMessageBox("信息", "没有最近的位置记录。", false);
-        return false;
-      }
-
-      bool result = false;
-      string selectedPathResult = null;
-
-      // 创建一个选择窗口
-      var selectWindow = new Window
-      {
-        Title = "选择最近路径",
-        Width = 500,
-        Height = 350,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize
-      };
-
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 红色提示文本
-      var warningText = new TextBlock
-      {
-        Text = "请选择git项目的根目录避免查询时间太久",
-        Margin = new Thickness(10, 10, 10, 5),
-        Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Red),
-        FontWeight = FontWeights.Bold,
-        TextWrapping = TextWrapping.Wrap
-      };
-      Grid.SetRow(warningText, 0);
-      grid.Children.Add(warningText);
-
-      // 列表框，显示最近的位置
-      var listBox = new ListBox
-      {
-        Margin = new Thickness(10),
-        ItemsSource = _locationManager.RecentLocations
-      };
-      Grid.SetRow(listBox, 1);
-      grid.Children.Add(listBox);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 10)
-      };
-      Grid.SetRow(buttonPanel, 2);
-
-      // 确认按钮
-      var confirmButton = new Button
-      {
-        Content = "确定",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      confirmButton.Click += (s, evt) =>
-      {
-        if (listBox.SelectedItem is string selectedPath)
-        {
-          // 不再将选择的路径填入到PathsTextBox，而是仅保存选中的路径
-          selectedPathResult = selectedPath;
-          result = true;
-          selectWindow.Close();
-        }
-        else
-        {
-          ShowCustomMessageBox("提示", "请先选择一个位置", false);
-        }
-      };
-
-      // 取消按钮
-      var cancelButton = new Button
-      {
-        Content = "取消",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      cancelButton.Click += (s, evt) =>
-      {
-        result = false;
-        selectWindow.Close();
-      };
-
-      buttonPanel.Children.Add(confirmButton);
-      buttonPanel.Children.Add(cancelButton);
-      grid.Children.Add(buttonPanel);
-
-      selectWindow.Content = grid;
-      selectWindow.ShowDialog();
-
-      // 如果成功选择了路径，设置临时扫描路径列表
-      if (result && !string.IsNullOrEmpty(selectedPathResult))
-      {
-        _tempScanPath = selectedPathResult;
-      }
-
-      return result;
     }
 
     // 从Git仓库获取作者信息
@@ -1355,14 +849,14 @@ namespace GitCommitsWPF
         StopButton.IsEnabled = false;
         _outputManager.UpdateOutput("===== 查询已手动停止 =====");
         _outputManager.HideProgressBar();
-        ShowCustomMessageBox("提示", "查询已手动停止", true);
+        _dialogManager.ShowCustomMessageBox("提示", "查询已手动停止", true);
 
         // 同步状态
         _isRunning = _queryExecutionManager.IsRunning;
       }
       else
       {
-        ShowCustomMessageBox("提示", "当前没有正在进行的查询", false);
+        _dialogManager.ShowCustomMessageBox("提示", "当前没有正在进行的查询", false);
       }
     }
 

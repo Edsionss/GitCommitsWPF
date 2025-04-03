@@ -76,8 +76,10 @@ namespace GitCommitsWPF.Services
         Func<bool> getStatsByRepo,
         Func<bool> getStatsByDate,
         Action<TextBox> updateFormattedResultTextBox,
-        Action setStartButtonEnabled,
-        Action setStopButtonEnabled,
+        Action disableStartButton,
+        Action enableStopButton,
+        Action disableStopButton,
+        Action enableStartButton,
         Action setSaveButtonEnabled,
         Action clearSearchFilter)
     {
@@ -94,8 +96,8 @@ namespace GitCommitsWPF.Services
       _isRunning = true;
 
       // 禁用开始按钮，启用停止按钮
-      setStartButtonEnabled();
-      setStopButtonEnabled();
+      disableStartButton();
+      enableStopButton();
 
       try
       {
@@ -140,8 +142,9 @@ namespace GitCommitsWPF.Services
       finally
       {
         _isRunning = false;
-        setStartButtonEnabled();
-        setStopButtonEnabled();
+        // 禁用停止按钮，启用开始按钮
+        disableStopButton();
+        enableStartButton();
         _outputManager.HideProgressBar();
       }
     }
