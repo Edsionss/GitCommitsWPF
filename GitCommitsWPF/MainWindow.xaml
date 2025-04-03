@@ -304,6 +304,27 @@
                     </DataGrid>
                 </Grid>
             </TabItem>
+            
+            <!-- 添加结果页签 -->
+            <TabItem Header="结果">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    
+                    <TextBlock Grid.Row="0" Text="当前结果集:" FontWeight="Bold" Margin="0,0,0,5"/>
+                    <TextBox Grid.Row="1" x:Name="FormattedResultTextBox" 
+                             HorizontalScrollBarVisibility="Auto" 
+                             VerticalScrollBarVisibility="Auto" 
+                             FontFamily="Consolas" 
+                             Background="#f8f8f8" 
+                             BorderThickness="1" 
+                             BorderBrush="#ddd"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"/>
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <!-- 结果区域 -->
