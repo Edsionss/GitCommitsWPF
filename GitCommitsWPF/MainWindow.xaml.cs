@@ -33,18 +33,23 @@ namespace GitCommitsWPF
   public partial class MainWindow : Window
   {
     private List<CommitInfo> _allCommits = new List<CommitInfo>();
-    private StringBuilder _outputContent = new StringBuilder();
     private int _repoCount = 0;
     private int _currentRepo = 0;
     private bool _isRunning = false;
     private List<CommitInfo> _filteredCommits = new List<CommitInfo>(); // 添加筛选后的提交列表
-    private List<string> _recentLocations = new List<string>(); // 保存最近扫描的git仓库的位置
-    private const int MaxRecentLocations = 10; // 最多保存10个最近扫描的git仓库的位置
-    private List<string> _saveLocations = new List<string>(); // 保存最近保存的文件的位置
-    private const int MaxSaveLocations = 10; // 最多保存10个最近保存的文件的位置
     private string _tempScanPath = ""; // 用于保存临时扫描路径
+
     // AuthorManager实例，用于管理作者相关功能
     private AuthorManager _authorManager = new AuthorManager();
+
+    // LocationManager实例，用于管理位置相关功能
+    private LocationManager _locationManager = new LocationManager();
+
+    // OutputManager实例，用于管理输出和进度条
+    private OutputManager _outputManager;
+
+    // DialogManager实例，用于管理对话框
+    private DialogManager _dialogManager;
 
     public MainWindow()
     {
@@ -58,14 +63,14 @@ namespace GitCommitsWPF
       StartDatePicker.SelectedDate = DateTime.Today;
       EndDatePicker.SelectedDate = DateTime.Today;
 
+      // 初始化输出管理器
+      _outputManager = new OutputManager(ResultTextBox, ProgressBar, Dispatcher);
+
+      // 初始化对话框管理器
+      _dialogManager = new DialogManager(this);
+
       // 初始化表格视图
       ConfigureDataGrid();
-
-      // 加载最近的位置
-      LoadRecentLocations();
-
-      // 加载最近的保存位置
-      LoadSaveLocations();
 
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
@@ -77,7 +82,7 @@ namespace GitCommitsWPF
       };
 
       // 加载扫描到的作者
-      LoadScannedAuthors();
+      _authorManager.LoadScannedAuthors();
     }
 
     // 配置DataGrid的属性和行为
@@ -116,59 +121,19 @@ namespace GitCommitsWPF
     // 加载最近使用的位置
     private void LoadRecentLocations()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string recentLocationsFile = Path.Combine(appDataPath, "RecentLocations.txt");
-
-        if (File.Exists(recentLocationsFile))
-        {
-          _recentLocations = FileUtility.ReadLinesFromFile(recentLocationsFile);
-        }
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误，使用空的最近位置列表
-        _recentLocations = new List<string>();
-        Debug.WriteLine("加载最近位置时出错: " + ex.Message);
-      }
+      _locationManager.LoadRecentLocations();
     }
 
     // 保存最近使用的位置
     private void SaveRecentLocations()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string recentLocationsFile = Path.Combine(appDataPath, "RecentLocations.txt");
-        FileUtility.SaveLinesToFile(recentLocationsFile, _recentLocations);
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误
-        Debug.WriteLine("保存最近位置时出错: " + ex.Message);
-      }
+      _locationManager.SaveRecentLocations();
     }
 
     // 添加路径到最近位置列表
     private void AddToRecentLocations(string path)
     {
-      if (string.IsNullOrEmpty(path)) return;
-
-      // 移除相同的路径（如果存在）
-      _recentLocations.Remove(path);
-
-      // 添加到列表开头
-      _recentLocations.Insert(0, path);
-
-      // 限制最近位置数量
-      if (_recentLocations.Count > MaxRecentLocations)
-      {
-        _recentLocations.RemoveAt(_recentLocations.Count - 1);
-      }
-
-      // 保存更新后的列表
-      SaveRecentLocations();
+      _locationManager.AddToRecentLocations(path);
     }
 
     // 检查路径是否为Git仓库
@@ -336,21 +301,20 @@ namespace GitCommitsWPF
       {
         if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
         {
-          AddToRecentLocations(path);
+          _locationManager.AddToRecentLocations(path);
         }
       }
 
       // 准备开始查询
       _allCommits.Clear();
       // 不再清除日志内容，添加分隔线
-      _outputContent.AppendLine("\n===== 开始新查询 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " =====\n");
-      ResultTextBox.Text = _outputContent.ToString(); // 更新显示
+      _outputManager.AddNewQuerySeparator();
       CommitsDataGrid.ItemsSource = null;
       SaveButton.IsEnabled = false;
 
       // 显示进度条
-      ProgressBar.Visibility = Visibility.Visible;
-      ProgressBar.Value = 5; // 设置初始进度值
+      _outputManager.ShowProgressBar();
+      _outputManager.UpdateProgressBar(5); // 设置初始进度值
       StartButton.IsEnabled = false;
       _isRunning = true;
 
@@ -379,7 +343,7 @@ namespace GitCommitsWPF
         Dispatcher.Invoke(() =>
         {
           StartButton.IsEnabled = true;
-          ProgressBar.Visibility = Visibility.Collapsed;
+          _outputManager.HideProgressBar();
         });
       }
     }
@@ -518,7 +482,7 @@ namespace GitCommitsWPF
         // 准备要保存的内容，但不创建文件，而是复制到剪贴板
         if (_allCommits.Count == 0)
         {
-          System.Windows.Clipboard.SetText(_outputContent.ToString());
+          System.Windows.Clipboard.SetText(_outputManager.OutputContent);
         }
         else
         {
@@ -733,60 +697,7 @@ namespace GitCommitsWPF
     // 显示复制成功的消息框（不显示文件相关按钮）
     private void ShowCopySuccessMessageBox(string title, string message)
     {
-      // 创建自定义消息窗口
-      var customMessageWindow = new Window
-      {
-        Title = title,
-        Width = 400,
-        Height = 200,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize,
-        Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#f0f0f0"))
-      };
-
-      // 创建内容面板
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 消息文本
-      var messageText = new TextBlock
-      {
-        Text = message,
-        Margin = new Thickness(20),
-        TextWrapping = TextWrapping.Wrap,
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center
-      };
-      Grid.SetRow(messageText, 0);
-      grid.Children.Add(messageText);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 20)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 确定按钮
-      var okButton = new Button
-      {
-        Content = "确定",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(10),
-        MinWidth = 80
-      };
-      okButton.Click += (s, e) => customMessageWindow.Close();
-
-      buttonPanel.Children.Add(okButton);
-      grid.Children.Add(buttonPanel);
-      customMessageWindow.Content = grid;
-
-      // 显示窗口
-      customMessageWindow.ShowDialog();
+      _dialogManager.ShowCopySuccessMessageBox(title, message);
     }
 
     private void CollectGitCommits()
@@ -1227,7 +1138,7 @@ namespace GitCommitsWPF
       {
         Dispatcher.Invoke(() =>
         {
-          ResultTextBox.Text = _outputContent.ToString();
+          ResultTextBox.Text = _outputManager.OutputContent;
           var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
           if (formattedResultTextBox != null)
           {
@@ -1330,7 +1241,7 @@ namespace GitCommitsWPF
 
         Dispatcher.Invoke(() =>
         {
-          ResultTextBox.Text = _outputContent.ToString() + Environment.NewLine + formattedContent;
+          ResultTextBox.Text = _outputManager.OutputContent + Environment.NewLine + formattedContent;
           // 在"结果"页签中仅显示格式化的结果，不包含日志输出
           var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
           if (formattedResultTextBox != null)
@@ -1364,7 +1275,7 @@ namespace GitCommitsWPF
 
         Dispatcher.Invoke(() =>
         {
-          ResultTextBox.Text = _outputContent.ToString() + Environment.NewLine + formattedContent;
+          ResultTextBox.Text = _outputManager.OutputContent + Environment.NewLine + formattedContent;
           // 在"结果"页签中仅显示格式化的结果，不包含日志输出
           var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
           if (formattedResultTextBox != null)
@@ -1379,7 +1290,7 @@ namespace GitCommitsWPF
     {
       if (_allCommits.Count == 0)
       {
-        File.WriteAllText(outputPath, _outputContent.ToString(), Encoding.UTF8);
+        File.WriteAllText(outputPath, _outputManager.OutputContent, Encoding.UTF8);
         return;
       }
 
@@ -1951,35 +1862,22 @@ namespace GitCommitsWPF
       xmlDoc.Save(path);
     }
 
+    // 更新输出内容
     private void UpdateOutput(string message)
     {
-      // 添加时间戳
-      string timeStamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-      string formattedMessage = string.Format("[{0}] {1}", timeStamp, message);
-
-      _outputContent.AppendLine(formattedMessage);
-
-      // 使用BeginInvoke避免死锁问题
-      Dispatcher.BeginInvoke(new Action(() =>
-      {
-        ResultTextBox.Text = _outputContent.ToString();
-        ResultTextBox.ScrollToEnd();
-      }));
+      _outputManager.UpdateOutput(message);
     }
 
+    // 更新进度条
     private void UpdateProgressBar(int value)
     {
-      // 使用BeginInvoke避免死锁问题
-      Dispatcher.BeginInvoke(new Action(() =>
-      {
-        ProgressBar.Value = value;
-      }));
+      _outputManager.UpdateProgressBar(value);
     }
 
     // 添加最近位置按钮点击事件
     private void AddRecentLocation_Click(object sender, RoutedEventArgs e)
     {
-      if (_recentLocations.Count == 0)
+      if (_locationManager.RecentLocations.Count == 0)
       {
         ShowCustomMessageBox("信息", "没有最近的位置记录。", false);
         return;
@@ -2004,7 +1902,7 @@ namespace GitCommitsWPF
       var listBox = new ListBox
       {
         Margin = new Thickness(10),
-        ItemsSource = _recentLocations
+        ItemsSource = _locationManager.RecentLocations
       };
       Grid.SetRow(listBox, 0);
 
@@ -2054,8 +1952,7 @@ namespace GitCommitsWPF
 
       clearButton.Click += (s, evt) =>
       {
-        _recentLocations.Clear();
-        SaveRecentLocations();
+        _locationManager.ClearRecentLocations();
         selectWindow.Close();
         ShowCustomMessageBox("信息", "已清除最近位置记录。", false);
       };
@@ -2102,74 +1999,7 @@ namespace GitCommitsWPF
     // 用于确认操作的自定义对话框
     private bool ShowCustomConfirmDialog(string title, string message)
     {
-      bool result = false;
-
-      // 创建自定义确认窗口
-      var confirmWindow = new Window
-      {
-        Title = title,
-        Width = 360,
-        Height = 180,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize,
-        Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#f0f0f0"))
-      };
-
-      // 创建内容面板
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 消息文本
-      var messageText = new TextBlock
-      {
-        Text = message,
-        Margin = new Thickness(20),
-        TextWrapping = TextWrapping.Wrap,
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center
-      };
-      Grid.SetRow(messageText, 0);
-      grid.Children.Add(messageText);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 20)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 确定按钮
-      var yesButton = new Button
-      {
-        Content = "确定",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(10),
-        MinWidth = 80
-      };
-      yesButton.Click += (s, e) => { result = true; confirmWindow.Close(); };
-
-      // 取消按钮
-      var noButton = new Button
-      {
-        Content = "取消",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(10),
-        MinWidth = 80
-      };
-      noButton.Click += (s, e) => { result = false; confirmWindow.Close(); };
-
-      buttonPanel.Children.Add(yesButton);
-      buttonPanel.Children.Add(noButton);
-      grid.Children.Add(buttonPanel);
-      confirmWindow.Content = grid;
-
-      // 显示窗口并等待结果
-      confirmWindow.ShowDialog();
-      return result;
+      return _dialogManager.ShowCustomConfirmDialog(title, message);
     }
 
     // 表格上下文菜单事件处理
@@ -2322,164 +2152,38 @@ namespace GitCommitsWPF
     // 显示自定义消息窗口，如果是保存成功消息，则提供打开文件选项
     private void ShowCustomMessageBox(string title, string message, bool isSuccess)
     {
-      // 创建自定义消息窗口
-      var customMessageWindow = new Window
+      string filePath = isSuccess ? OutputPathTextBox.Text : null;
+
+      // 如果是成功消息且有文件路径，添加到最近保存位置
+      if (isSuccess && !string.IsNullOrEmpty(filePath))
       {
-        Title = title,
-        Width = 400,
-        Height = 200,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize,
-        Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#f0f0f0"))
-      };
-
-      // 创建内容面板
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 消息文本
-      var messageText = new TextBlock
-      {
-        Text = message,
-        Margin = new Thickness(20),
-        TextWrapping = TextWrapping.Wrap,
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center
-      };
-      Grid.SetRow(messageText, 0);
-      grid.Children.Add(messageText);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 20)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 确定按钮
-      var okButton = new Button
-      {
-        Content = "确定",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(10),
-        MinWidth = 80
-      };
-      okButton.Click += (s, e) => customMessageWindow.Close();
-
-      buttonPanel.Children.Add(okButton);
-
-      // 如果是成功消息且保存了文件，添加打开文件按钮
-      if (isSuccess && !string.IsNullOrEmpty(OutputPathTextBox.Text))
-      {
-        // 添加保存位置到最近保存位置列表
-        AddToSaveLocations(OutputPathTextBox.Text);
-
-        // 添加打开文件按钮
-        var openFileButton = new Button
-        {
-          Content = "打开文件",
-          Padding = new Thickness(15, 5, 15, 5),
-          Margin = new Thickness(10),
-          MinWidth = 80
-        };
-
-        openFileButton.Click += (s, e) =>
-        {
-          try
-          {
-            // 打开保存的文件
-            var filePath = OutputPathTextBox.Text;
-            if (File.Exists(filePath))
-            {
-              Process.Start(new ProcessStartInfo
-              {
-                FileName = filePath,
-                UseShellExecute = true
-              });
-            }
-            customMessageWindow.Close();
-          }
-          catch (Exception ex)
-          {
-            messageText.Text = string.Format("无法打开文件：{0}", ex.Message);
-          }
-        };
-
-        buttonPanel.Children.Add(openFileButton);
+        _locationManager.AddToSaveLocations(filePath);
       }
 
-      grid.Children.Add(buttonPanel);
-      customMessageWindow.Content = grid;
-
-      // 显示窗口
-      customMessageWindow.ShowDialog();
+      _dialogManager.ShowCustomMessageBox(title, message, isSuccess, filePath);
     }
 
     // 加载最近保存的位置
     private void LoadSaveLocations()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string saveLocationsFile = Path.Combine(appDataPath, "SaveLocations.txt");
-
-        if (File.Exists(saveLocationsFile))
-        {
-          _saveLocations = FileUtility.ReadLinesFromFile(saveLocationsFile);
-        }
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误，使用空的最近保存位置列表
-        _saveLocations = new List<string>();
-        Debug.WriteLine("加载最近保存位置时出错: " + ex.Message);
-      }
+      _locationManager.LoadSaveLocations();
     }
 
     // 保存最近保存的位置
     private void SaveSaveLocations()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string saveLocationsFile = Path.Combine(appDataPath, "SaveLocations.txt");
-        FileUtility.SaveLinesToFile(saveLocationsFile, _saveLocations);
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误
-        Debug.WriteLine("保存最近保存位置时出错: " + ex.Message);
-      }
+      _locationManager.SaveSaveLocations();
     }
 
     // 添加路径到最近保存位置列表
     private void AddToSaveLocations(string path)
     {
-      if (string.IsNullOrEmpty(path)) return;
-
-      // 移除相同的路径（如果存在）
-      _saveLocations.Remove(path);
-
-      // 添加到列表开头
-      _saveLocations.Insert(0, path);
-
-      // 限制最近位置数量
-      if (_saveLocations.Count > MaxSaveLocations)
-      {
-        _saveLocations.RemoveAt(_saveLocations.Count - 1);
-      }
-
-      // 保存更新后的列表
-      SaveSaveLocations();
+      _locationManager.AddToSaveLocations(path);
     }
 
     private void LoadLastPath_Click(object sender, RoutedEventArgs e)
     {
-      if (_saveLocations.Count == 0)
+      if (_locationManager.SaveLocations.Count == 0)
       {
         ShowCustomMessageBox("信息", "没有最近的保存位置记录。", false);
         return;
@@ -2504,7 +2208,7 @@ namespace GitCommitsWPF
       var listBox = new ListBox
       {
         Margin = new Thickness(10),
-        ItemsSource = _saveLocations
+        ItemsSource = _locationManager.SaveLocations
       };
       Grid.SetRow(listBox, 0);
 
@@ -2570,8 +2274,7 @@ namespace GitCommitsWPF
 
       clearButton.Click += (s, evt) =>
       {
-        _saveLocations.Clear();
-        SaveSaveLocations();
+        _locationManager.ClearSaveLocations();
         selectWindow.Close();
         ShowCustomMessageBox("信息", "已清除最近保存位置记录。", false);
       };
@@ -2652,7 +2355,7 @@ namespace GitCommitsWPF
         }
 
         // 添加一个分隔线，开始新的日志记录
-        _outputContent.AppendLine("\n===== 开始扫描Git作者 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " =====\n");
+        _outputManager.AddSeparator();
 
         // 自动查找本地git作者
         UpdateOutput("开始扫描本地Git作者信息...");
@@ -2663,8 +2366,8 @@ namespace GitCommitsWPF
         // 显示进度条
         Dispatcher.Invoke(() =>
         {
-          ProgressBar.Visibility = Visibility.Visible;
-          ProgressBar.Value = 10;  // 设置一个基础进度值，让用户知道程序开始运行
+          _outputManager.ShowProgressBar();
+          _outputManager.UpdateProgressBar(10);  // 设置一个基础进度值，让用户知道程序开始运行
           UpdateOutput("正在初始化扫描过程...");
         });
 
@@ -2750,7 +2453,7 @@ namespace GitCommitsWPF
         // 隐藏进度条
         Dispatcher.Invoke(() =>
         {
-          ProgressBar.Visibility = Visibility.Collapsed;
+          _outputManager.HideProgressBar();
         });
 
         // 移除重复的作者
@@ -2868,7 +2571,7 @@ namespace GitCommitsWPF
     // 显示最近路径选择对话框，带有红色提示信息
     private bool ShowRecentPathSelectionDialog()
     {
-      if (_recentLocations.Count == 0)
+      if (_locationManager.RecentLocations.Count == 0)
       {
         ShowCustomMessageBox("信息", "没有最近的位置记录。", false);
         return false;
@@ -2909,7 +2612,7 @@ namespace GitCommitsWPF
       var listBox = new ListBox
       {
         Margin = new Thickness(10),
-        ItemsSource = _recentLocations
+        ItemsSource = _locationManager.RecentLocations
       };
       Grid.SetRow(listBox, 1);
       grid.Children.Add(listBox);
@@ -3053,105 +2756,16 @@ namespace GitCommitsWPF
     // 显示作者选择对话框
     private void ShowAuthorSelectionDialog(List<string> authors)
     {
-      // 创建一个选择窗口
-      var selectWindow = new Window
+      // 创建并显示作者选择窗口
+      var authorSelectionWindow = new Views.AuthorSelectionWindow(_authorManager, _dialogManager)
       {
-        Title = "选择Git作者",
-        Width = 400,
-        Height = 500,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize
+        Owner = this
       };
 
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 添加搜索框
-      var searchPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10) };
-      var searchLabel = new TextBlock { Text = "搜索:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 5, 0) };
-      var searchBox = new System.Windows.Controls.TextBox { Width = 300, Margin = new Thickness(5, 0, 0, 0) };
-      searchPanel.Children.Add(searchLabel);
-      searchPanel.Children.Add(searchBox);
-      Grid.SetRow(searchPanel, 0);
-      grid.Children.Add(searchPanel);
-
-      // 作者列表
-      var listBox = new ListBox
+      if (authorSelectionWindow.ShowDialog() == true && !string.IsNullOrEmpty(authorSelectionWindow.SelectedAuthor))
       {
-        Margin = new Thickness(10),
-        ItemsSource = authors
-      };
-      Grid.SetRow(listBox, 1);
-      grid.Children.Add(listBox);
-
-      // 实现搜索功能
-      searchBox.TextChanged += (s, e) =>
-      {
-        string filter = searchBox.Text.ToLower();
-        if (string.IsNullOrEmpty(filter))
-        {
-          listBox.ItemsSource = authors;
-        }
-        else
-        {
-          listBox.ItemsSource = authors.Where(a => a.ToLower().Contains(filter)).ToList();
-        }
-      };
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 10)
-      };
-      Grid.SetRow(buttonPanel, 2);
-
-      // 选择按钮
-      var selectButton = new Button
-      {
-        Content = "选择",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      selectButton.Click += (s, evt) =>
-      {
-        if (listBox.SelectedItem is string selectedAuthor)
-        {
-          AuthorTextBox.Text = selectedAuthor;
-          selectWindow.Close();
-        }
-        else
-        {
-          ShowCustomMessageBox("提示", "请先选择一个作者", false);
-        }
-      };
-
-      // 取消按钮
-      var cancelButton = new Button
-      {
-        Content = "取消",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      cancelButton.Click += (s, evt) =>
-      {
-        selectWindow.Close();
-      };
-
-      buttonPanel.Children.Add(selectButton);
-      buttonPanel.Children.Add(cancelButton);
-      grid.Children.Add(buttonPanel);
-
-      selectWindow.Content = grid;
-      selectWindow.ShowDialog();
+        AuthorTextBox.Text = authorSelectionWindow.SelectedAuthor;
+      }
     }
 
     // 复制日志
@@ -3218,20 +2832,10 @@ namespace GitCommitsWPF
     // 清空日志
     private void CleanLog_Click(object sender, RoutedEventArgs e)
     {
-      // 确认是否清空日志
-      if (ShowCustomConfirmDialog("确认清空", "确定要清空所有日志记录吗？此操作不可撤销。"))
+      if (ShowCustomConfirmDialog("确认", "确定要清除所有日志吗？"))
       {
-        try
-        {
-          // 清空StringBuilder和文本框
-          _outputContent.Clear();
-          ResultTextBox.Text = "";
-          UpdateOutput("日志已清空。");
-        }
-        catch (Exception ex)
-        {
-          ShowCustomMessageBox("错误", string.Format("清空日志时出错: {0}", ex.Message), false);
-        }
+        _outputManager.ClearOutput();
+        UpdateOutput("日志已清除");
       }
     }
 
@@ -3255,269 +2859,22 @@ namespace GitCommitsWPF
     // 最近使用
     private void LastAuthor_Click(object sender, RoutedEventArgs e)
     {
-      // 如果最近作者列表为空，则尝试从已有提交中收集
-      if (_authorManager.RecentAuthors.Count == 0)
+      // 创建并显示作者选择窗口
+      var authorSelectionWindow = new Views.AuthorSelectionWindow(_authorManager, _dialogManager)
       {
-        // 从已有提交中收集作者信息
-        HashSet<string> uniqueAuthors = new HashSet<string>();
-        foreach (var commit in _allCommits)
-        {
-          if (!string.IsNullOrEmpty(commit.Author))
-          {
-            uniqueAuthors.Add(commit.Author);
-          }
-        }
+        Owner = this
+      };
 
-        // 如果没有找到作者
-        if (uniqueAuthors.Count == 0)
-        {
-          ShowCustomMessageBox("提示", "尚未找到任何作者信息。请先执行查询或添加作者。", false);
-          return;
-        }
+      // 从已有提交中初始化作者列表（如果最近作者列表为空）
+      authorSelectionWindow.InitializeFromCommits(_allCommits);
 
-        // 添加找到的作者到最近作者列表
-        foreach (var author in uniqueAuthors)
-        {
-          _authorManager.AddToRecentAuthors(author);
-        }
+      if (authorSelectionWindow.ShowDialog() == true && !string.IsNullOrEmpty(authorSelectionWindow.SelectedAuthor))
+      {
+        AuthorTextBox.Text = authorSelectionWindow.SelectedAuthor;
+
+        // 应用筛选
+        ApplyFilter();
       }
-
-      // 创建作者选择窗口
-      var selectWindow = new Window
-      {
-        Title = "选择作者",
-        Width = 500,
-        Height = 400,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize
-      };
-
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 创建Tab控件
-      var tabControl = new TabControl
-      {
-        Margin = new Thickness(10)
-      };
-      Grid.SetRow(tabControl, 0);
-
-      // 第一个Tab：最近使用的作者
-      var recentTab = new TabItem
-      {
-        Header = "最近使用",
-        IsSelected = true
-      };
-
-      // 最近使用的作者列表
-      var recentListBox = new ListBox
-      {
-        Margin = new Thickness(5),
-        ItemsSource = _authorManager.RecentAuthors
-      };
-      recentTab.Content = recentListBox;
-
-      // 第二个Tab：扫描到的作者
-      var scannedTab = new TabItem
-      {
-        Header = "扫描记录"
-      };
-
-      // 扫描到的作者列表及搜索框
-      var scannedPanel = new DockPanel();
-      var searchPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        Margin = new Thickness(5)
-      };
-      DockPanel.SetDock(searchPanel, Dock.Top);
-
-      var searchLabel = new TextBlock
-      {
-        Text = "搜索:",
-        VerticalAlignment = VerticalAlignment.Center,
-        Margin = new Thickness(0, 0, 5, 0)
-      };
-
-      var searchBox = new System.Windows.Controls.TextBox
-      {
-        Width = 300,
-        Margin = new Thickness(5, 0, 0, 0)
-      };
-
-      searchPanel.Children.Add(searchLabel);
-      searchPanel.Children.Add(searchBox);
-      scannedPanel.Children.Add(searchPanel);
-
-      // 扫描到的作者列表
-      var scannedListBox = new ListBox
-      {
-        Margin = new Thickness(5),
-        ItemsSource = _authorManager.ScannedAuthors.OrderBy(a => a).ToList()
-      };
-      DockPanel.SetDock(scannedListBox, Dock.Top);
-      scannedPanel.Children.Add(scannedListBox);
-
-      // 实现搜索功能
-      searchBox.TextChanged += (s, evt) =>
-      {
-        string filter = searchBox.Text.ToLower();
-        if (string.IsNullOrEmpty(filter))
-        {
-          scannedListBox.ItemsSource = _authorManager.ScannedAuthors.OrderBy(a => a).ToList();
-        }
-        else
-        {
-          scannedListBox.ItemsSource = _authorManager.ScannedAuthors
-                    .Where(a => a.ToLower().Contains(filter))
-                    .OrderBy(a => a)
-                    .ToList();
-        }
-      };
-
-      scannedTab.Content = scannedPanel;
-
-      // 添加Tab到TabControl
-      tabControl.Items.Add(recentTab);
-      tabControl.Items.Add(scannedTab);
-      grid.Children.Add(tabControl);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 0, 0, 10)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 选择按钮
-      var selectButton = new Button
-      {
-        Content = "选择",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      selectButton.Click += (s, evt) =>
-      {
-        ListBox selectedListBox = null;
-        if (tabControl.SelectedItem == recentTab)
-        {
-          selectedListBox = recentListBox;
-        }
-        else
-        {
-          selectedListBox = scannedListBox;
-        }
-
-        if (selectedListBox != null && selectedListBox.SelectedItem is string selectedAuthor)
-        {
-          AuthorTextBox.Text = selectedAuthor;
-
-          // 如果选择的是扫描作者，添加到最近作者列表
-          if (tabControl.SelectedItem == scannedTab)
-          {
-            _authorManager.AddToRecentAuthors(selectedAuthor);
-          }
-
-          selectWindow.Close();
-
-          // 应用筛选
-          ApplyFilter();
-        }
-        else
-        {
-          ShowCustomMessageBox("提示", "请先选择一个作者", false);
-        }
-      };
-
-      // 清除按钮
-      var clearButton = new Button
-      {
-        Content = "清除记录",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      clearButton.Click += (s, evt) =>
-      {
-        if (tabControl.SelectedItem == recentTab)
-        {
-          // 清除最近作者
-          _authorManager.RecentAuthors.Clear();
-          _authorManager.SaveRecentAuthors();
-          recentListBox.ItemsSource = null;
-          recentListBox.Items.Clear();
-          ShowCustomMessageBox("信息", "已清除最近作者记录。", false);
-        }
-        else
-        {
-          // 清除扫描作者
-          _authorManager.ScannedAuthors.Clear();
-          _authorManager.SaveScannedAuthors();
-          scannedListBox.ItemsSource = null;
-          scannedListBox.Items.Clear();
-          ShowCustomMessageBox("信息", "已清除扫描作者记录。", false);
-        }
-      };
-
-      // 取消按钮
-      var cancelButton = new Button
-      {
-        Content = "取消",
-        Padding = new Thickness(15, 5, 15, 5),
-        Margin = new Thickness(5),
-        MinWidth = 80
-      };
-
-      cancelButton.Click += (s, evt) =>
-      {
-        selectWindow.Close();
-      };
-
-      buttonPanel.Children.Add(selectButton);
-      buttonPanel.Children.Add(clearButton);
-      buttonPanel.Children.Add(cancelButton);
-
-      grid.Children.Add(buttonPanel);
-
-      selectWindow.Content = grid;
-      selectWindow.ShowDialog();
-    }
-
-    // 加载最近使用的作者
-    private void LoadRecentAuthors()
-    {
-      _authorManager.LoadRecentAuthors();
-    }
-
-    // 保存最近使用的作者
-    private void SaveRecentAuthors()
-    {
-      _authorManager.SaveRecentAuthors();
-    }
-
-    // 添加作者到最近作者列表
-    private void AddToRecentAuthors(string author)
-    {
-      _authorManager.AddToRecentAuthors(author);
-    }
-
-    // 加载扫描到的作者
-    private void LoadScannedAuthors()
-    {
-      _authorManager.LoadScannedAuthors();
-    }
-
-    // 保存扫描到的作者
-    private void SaveScannedAuthors()
-    {
-      _authorManager.SaveScannedAuthors();
     }
   }
 }
