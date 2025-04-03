@@ -69,6 +69,9 @@ namespace GitCommitsWPF
     // FormattingManager实例，用于管理格式化显示功能
     private FormattingManager _formattingManager = new FormattingManager();
 
+    // DataGridManager实例，用于管理DataGrid相关功能
+    private DataGridManager _dataGridManager;
+
     public MainWindow()
     {
       InitializeComponent();
@@ -96,8 +99,9 @@ namespace GitCommitsWPF
       // 初始化Git操作管理器
       _gitOperationsManager = new GitOperationsManager(_outputManager, _dialogManager, _authorManager);
 
-      // 初始化表格视图
-      ConfigureDataGrid();
+      // 初始化DataGrid管理器
+      _dataGridManager = new DataGridManager(_dialogManager);
+      _dataGridManager.Initialize(CommitsDataGrid, ShowCustomMessageBox, () => FormatTextBox.Text);
 
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
@@ -110,39 +114,40 @@ namespace GitCommitsWPF
 
       // 加载扫描到的作者
       _authorManager.LoadScannedAuthors();
+
+      // 加载最近保存位置
+      LoadSaveLocations();
+      // 加载最近使用的位置
+      LoadRecentLocations();
+
+      // 添加Loaded事件处理器，确保UI完全加载后执行初始化
+      this.Loaded += MainWindow_Loaded;
+
+      // 添加关闭事件处理器，确保应用程序退出时保存设置
+      this.Closing += MainWindow_Closing;
+    }
+
+    // 窗口加载完成后的处理
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+      // 再次确保加载最近保存位置和最近使用的位置
+      LoadSaveLocations();
+      LoadRecentLocations();
+    }
+
+    // 窗口关闭时的处理
+    private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+    {
+      // 保存最近保存位置和最近使用的位置
+      SaveSaveLocations();
+      SaveRecentLocations();
     }
 
     // 配置DataGrid的属性和行为
     private void ConfigureDataGrid()
     {
-      // 设置DataGrid的排序行为
-      CommitsDataGrid.Sorting += (s, e) =>
-      {
-        // 可以在这里添加自定义排序逻辑
-        e.Handled = false; // 使用默认排序行为
-      };
-
-      // 设置DataGrid的选择模式
-      CommitsDataGrid.SelectionMode = DataGridSelectionMode.Extended;
-      CommitsDataGrid.SelectionUnit = DataGridSelectionUnit.FullRow;
-
-      // 双击行时查看详细信息
-      CommitsDataGrid.MouseDoubleClick += (s, e) =>
-      {
-        if (CommitsDataGrid.SelectedItem is CommitInfo selectedCommit)
-        {
-          var details = new StringBuilder();
-          details.AppendLine("提交详情：");
-          details.AppendLine(string.Format("仓库: {0}", selectedCommit.Repository));
-          details.AppendLine(string.Format("仓库路径: {0}", selectedCommit.RepoPath));
-          details.AppendLine(string.Format("提交ID: {0}", selectedCommit.CommitId));
-          details.AppendLine(string.Format("作者: {0}", selectedCommit.Author));
-          details.AppendLine(string.Format("日期: {0}", selectedCommit.Date));
-          details.AppendLine(string.Format("消息: {0}", selectedCommit.Message));
-
-          ShowCustomMessageBox("提交详情", details.ToString(), false);
-        }
-      };
+      // 使用DataGridManager进行配置，无需在此处直接配置
+      // 已在构造函数中通过_dataGridManager.Initialize完成配置
     }
 
     // 加载最近使用的位置
@@ -204,6 +209,8 @@ namespace GitCommitsWPF
 
             // 添加到最近位置
             AddToRecentLocations(selectedPath);
+            // 确保保存最近位置
+            SaveRecentLocations();
           }
         }
       }
@@ -238,6 +245,8 @@ namespace GitCommitsWPF
 
             // 添加到最近位置
             AddToRecentLocations(selectedPath);
+            // 确保保存最近位置
+            SaveRecentLocations();
           }
         }
       }
@@ -371,7 +380,7 @@ namespace GitCommitsWPF
         SaveResults(filePath);
 
         // 添加到最近保存位置
-        AddToSaveLocations(Path.GetDirectoryName(filePath));
+        AddToSaveLocations(filePath);
 
         // 刷新结果页签的内容
         UpdateFormattedResultTextBox();
@@ -660,7 +669,8 @@ namespace GitCommitsWPF
           {
             formattedResultTextBox.Text = string.Empty; // 清空结果页签的内容
           }
-          CommitsDataGrid.ItemsSource = null; // 清空表格数据
+          // 使用DataGridManager更新数据源
+          _dataGridManager.UpdateDataSource(null);
           _filteredCommits.Clear(); // 清空筛选结果
         });
         return;
@@ -679,8 +689,8 @@ namespace GitCommitsWPF
           DateFieldCheckBox.IsChecked == true,
           MessageFieldCheckBox.IsChecked == true);
 
-        // 设置DataGrid的数据源
-        CommitsDataGrid.ItemsSource = _allCommits;
+        // 使用DataGridManager更新数据源
+        _dataGridManager.UpdateDataSource(_allCommits);
         _filteredCommits = new List<CommitInfo>(_allCommits); // 重置筛选结果
         SearchFilterTextBox.Clear(); // 清空搜索框
       });
@@ -1118,6 +1128,11 @@ namespace GitCommitsWPF
             PathsTextBox.Text += Environment.NewLine;
           }
           PathsTextBox.Text += selectedPath;
+
+          // 确保路径被添加到最近位置并保存
+          AddToRecentLocations(selectedPath);
+          SaveRecentLocations();
+
           selectWindow.Close();
         }
         else
@@ -1189,100 +1204,27 @@ namespace GitCommitsWPF
     // 表格上下文菜单事件处理
     private void CopySelectedRows_Click(object sender, RoutedEventArgs e)
     {
-      try
-      {
-        var selectedItems = CommitsDataGrid.SelectedItems.Cast<CommitInfo>().ToList();
-        if (selectedItems.Count == 0) return;
-
-        StringBuilder clipboardText = new StringBuilder();
-        foreach (var item in selectedItems)
-        {
-          string line = "";
-
-          // 使用和显示相同的格式
-          if (!string.IsNullOrEmpty(FormatTextBox.Text))
-          {
-            line = FormatTextBox.Text;
-            line = line.Replace("{Repository}", item.Repository)
-                .Replace("{RepoPath}", item.RepoPath)
-                .Replace("{RepoFolder}", item.RepoFolder)
-                .Replace("{CommitId}", item.CommitId)
-                .Replace("{Author}", item.Author)
-                .Replace("{Date}", item.Date)
-                .Replace("{Message}", item.Message);
-          }
-          else
-          {
-            // 默认格式
-            line = string.Format("{0}: {1}", item.Repository, item.Message);
-          }
-
-          clipboardText.AppendLine(line);
-        }
-
-        System.Windows.Clipboard.SetText(clipboardText.ToString());
-        ShowCustomMessageBox("复制成功", string.Format("已复制 {0} 行数据到剪贴板", CommitsDataGrid.SelectedItems.Count), false);
-      }
-      catch (Exception ex)
-      {
-        ShowCustomMessageBox("错误", string.Format("复制到剪贴板时出错: {0}", ex.Message), false);
-      }
+      _dataGridManager.CopySelectedRows();
     }
 
     private void ExportSelectedToClipboard_Click(object sender, RoutedEventArgs e)
     {
-      try
-      {
-        var selectedItems = CommitsDataGrid.SelectedItems.Cast<CommitInfo>().ToList();
-        if (selectedItems.Count == 0) return;
-
-        // 将选中的行转换为JSON格式
-        var jsonItems = selectedItems.Select(item => new
-        {
-          Repository = item.Repository,
-          RepoPath = item.RepoPath,
-          RepoFolder = item.RepoFolder,
-          CommitId = item.CommitId,
-          Author = item.Author,
-          Date = item.Date,
-          Message = item.Message
-        }).ToList();
-
-        string json = JsonConvert.SerializeObject(jsonItems, Formatting.Indented);
-        System.Windows.Clipboard.SetText(json);
-        ShowCustomMessageBox("导出成功", string.Format("已导出 {0} 行数据到剪贴板 (JSON格式)", CommitsDataGrid.SelectedItems.Count), false);
-      }
-      catch (Exception ex)
-      {
-        ShowCustomMessageBox("错误", string.Format("导出到剪贴板时出错: {0}", ex.Message), false);
-      }
+      _dataGridManager.ExportSelectedToClipboard();
     }
 
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
-      CommitsDataGrid.SelectAll();
+      _dataGridManager.SelectAll();
     }
 
     private void DeselectAll_Click(object sender, RoutedEventArgs e)
     {
-      CommitsDataGrid.UnselectAll();
+      _dataGridManager.DeselectAll();
     }
 
     private void ViewCommitDetails_Click(object sender, RoutedEventArgs e)
     {
-      if (CommitsDataGrid.SelectedItem is CommitInfo selectedCommit)
-      {
-        var details = new StringBuilder();
-        details.AppendLine("提交详情：");
-        details.AppendLine(string.Format("仓库: {0}", selectedCommit.Repository));
-        details.AppendLine(string.Format("仓库路径: {0}", selectedCommit.RepoPath));
-        details.AppendLine(string.Format("提交ID: {0}", selectedCommit.CommitId));
-        details.AppendLine(string.Format("作者: {0}", selectedCommit.Author));
-        details.AppendLine(string.Format("日期: {0}", selectedCommit.Date));
-        details.AppendLine(string.Format("消息: {0}", selectedCommit.Message));
-
-        ShowCustomMessageBox("提交详情", details.ToString(), false);
-      }
+      _dataGridManager.ViewCommitDetails();
     }
 
     // 搜索过滤相关方法
@@ -1312,7 +1254,7 @@ namespace GitCommitsWPF
       if (string.IsNullOrEmpty(filterText))
       {
         // 如果没有筛选条件，显示所有数据
-        CommitsDataGrid.ItemsSource = _allCommits;
+        _dataGridManager.UpdateDataSource(_allCommits);
         return;
       }
 
@@ -1320,7 +1262,7 @@ namespace GitCommitsWPF
       _filteredCommits = _searchFilterManager.ApplyFilter(_allCommits, filterText);
 
       // 更新UI
-      CommitsDataGrid.ItemsSource = _filteredCommits;
+      _dataGridManager.UpdateDataSource(_filteredCommits);
 
       // 显示筛选结果
       ShowCustomMessageBox("筛选结果", _searchFilterManager.GetFilterStats(_filteredCommits), false);
@@ -1427,6 +1369,10 @@ namespace GitCommitsWPF
               OutputPathTextBox.Text = newPath;
             }
 
+            // 确保将选择的路径添加到最近保存位置并保存
+            AddToSaveLocations(selectedPath);
+            SaveSaveLocations();
+
             selectWindow.Close();
           }
           else
@@ -1473,6 +1419,9 @@ namespace GitCommitsWPF
       buttonPanel.Children.Add(addButton);
       buttonPanel.Children.Add(clearButton);
       buttonPanel.Children.Add(cancelButton);
+
+      // 确保将listBox和buttonPanel添加到grid中
+      grid.Children.Add(listBox);
       grid.Children.Add(buttonPanel);
 
       selectWindow.Content = grid;
