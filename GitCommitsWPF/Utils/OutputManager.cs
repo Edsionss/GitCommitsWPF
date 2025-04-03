@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -122,6 +123,44 @@ namespace GitCommitsWPF.Utils
         _resultTextBox.Text = _outputContent.ToString();
         _resultTextBox.ScrollToEnd();
       }));
+    }
+
+    /// <summary>
+    /// 异步更新输出内容
+    /// </summary>
+    /// <param name="message">要添加的消息</param>
+    public Task UpdateOutputAsync(string message)
+    {
+      UpdateOutput(message);
+      return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 异步更新进度条
+    /// </summary>
+    /// <param name="value">进度值(0-100)</param>
+    public Task UpdateProgressBarAsync(int value)
+    {
+      UpdateProgressBar(value);
+      return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 异步显示进度条
+    /// </summary>
+    public Task ShowProgressBarAsync()
+    {
+      ShowProgressBar();
+      return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 异步隐藏进度条
+    /// </summary>
+    public Task HideProgressBarAsync()
+    {
+      HideProgressBar();
+      return Task.CompletedTask;
     }
   }
 }

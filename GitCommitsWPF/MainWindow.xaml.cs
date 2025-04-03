@@ -282,8 +282,9 @@ namespace GitCommitsWPF
       _filteredCommits.Clear();
       _isRunning = true;
 
-      // 禁用开始按钮，防止重复点击
+      // 禁用开始按钮，启用停止按钮
       StartButton.IsEnabled = false;
+      StopButton.IsEnabled = true;
 
       try
       {
@@ -292,16 +293,15 @@ namespace GitCommitsWPF
 
         // 异步执行查询
         await CollectGitCommits();
+
         // 查询完成后，显示结果并更新UI
         ShowResults();
 
-        Dispatcher.Invoke(() =>
-        {
-          SaveButton.IsEnabled = true;
-          int commitCount = _allCommits.Count;
-          string commitText = commitCount == 1 ? "条提交记录" : "条提交记录";
-          UpdateOutput(string.Format("===== 扫描完成，找到 {0} {1} =====，点击结果页签查看", commitCount, commitText));
-        });
+        // 更新完成消息
+        SaveButton.IsEnabled = true;
+        int commitCount = _allCommits.Count;
+        string commitText = commitCount == 1 ? "条提交记录" : "条提交记录";
+        UpdateOutput(string.Format("===== 扫描完成，找到 {0} {1} =====，点击结果页签查看", commitCount, commitText));
       }
       catch (Exception ex)
       {
@@ -310,11 +310,9 @@ namespace GitCommitsWPF
       finally
       {
         _isRunning = false;
-        Dispatcher.Invoke(() =>
-        {
-          StartButton.IsEnabled = true;
-          _outputManager.HideProgressBar();
-        });
+        StartButton.IsEnabled = true;
+        StopButton.IsEnabled = false;
+        _outputManager.HideProgressBar();
       }
     }
 

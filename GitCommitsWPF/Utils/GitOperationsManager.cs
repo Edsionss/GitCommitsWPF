@@ -291,10 +291,10 @@ namespace GitCommitsWPF.Utils
 
       try
       {
-        // 显示进度条
-        _outputManager.ShowProgressBar();
-        _outputManager.UpdateProgressBar(5); // 设置初始进度值
-        _outputManager.UpdateOutput("正在初始化Git仓库扫描...");
+        // 显示进度条 - 改为任务执行前先更新UI
+        await _outputManager.ShowProgressBarAsync();
+        await _outputManager.UpdateProgressBarAsync(5); // 设置初始进度值
+        await _outputManager.UpdateOutputAsync("正在初始化Git仓库扫描...");
 
         // 处理日期范围
         if (string.IsNullOrEmpty(until))
@@ -303,7 +303,8 @@ namespace GitCommitsWPF.Utils
         }
 
         // 增加进度到15%，表示日期处理阶段
-        _outputManager.UpdateProgressBar(15);
+        await _outputManager.UpdateProgressBarAsync(15);
+        await Task.Delay(100); // 短暂延迟让UI有时间刷新
 
         // 构建Git字段
         var gitFields = new List<string> { "CommitId", "Author", "Date", "Message" };
@@ -328,10 +329,11 @@ namespace GitCommitsWPF.Utils
         string gitFormat = string.Join("|", gitFormatParts);
 
         // 增加进度到20%，表示准备阶段完成
-        _outputManager.UpdateProgressBar(20);
+        await _outputManager.UpdateProgressBarAsync(20);
+        await _outputManager.UpdateOutputAsync("正在搜索Git仓库，请稍后...");
+        await Task.Delay(100); // 短暂延迟让UI有时间刷新
 
         // 查找所有Git仓库
-        _outputManager.UpdateOutput("正在搜索Git仓库，请稍后...");
         var gitRepos = new List<DirectoryInfo>();
 
         // 搜索仓库阶段，分配20%-40%的进度
@@ -343,22 +345,23 @@ namespace GitCommitsWPF.Utils
           // 检查是否已手动停止
           if (!_isRunning)
           {
-            _outputManager.UpdateOutput("扫描已手动停止");
+            await _outputManager.UpdateOutputAsync("扫描已手动停止");
             return commits;
           }
 
           pathIndex++;
           // 更新搜索阶段的进度
           int searchProgress = 20 + (int)((pathIndex / (double)totalPaths) * 20);
-          _outputManager.UpdateProgressBar(searchProgress);
-          _outputManager.UpdateOutput($"正在搜索路径 [{pathIndex}/{totalPaths}]: {path}");
+          await _outputManager.UpdateProgressBarAsync(searchProgress);
+          await _outputManager.UpdateOutputAsync($"正在搜索路径 [{pathIndex}/{totalPaths}]: {path}");
+          await Task.Delay(50); // 短暂延迟让UI有时间刷新
 
           try
           {
             var dir = new DirectoryInfo(path);
             if (!dir.Exists)
             {
-              _outputManager.UpdateOutput($"警告: 路径不存在: {path}");
+              await _outputManager.UpdateOutputAsync($"警告: 路径不存在: {path}");
               continue;
             }
 
@@ -368,278 +371,141 @@ namespace GitCommitsWPF.Utils
               if (IsGitRepository(path))
               {
                 gitRepos.Add(dir);
-                _outputManager.UpdateOutput($"添加Git仓库: {path}");
+                await _outputManager.UpdateOutputAsync($"添加Git仓库: {path}");
               }
               else
               {
-                _outputManager.UpdateOutput($"警告: 路径不是Git仓库: {path}");
+                await _outputManager.UpdateOutputAsync($"警告: 路径不是Git仓库: {path}");
               }
             }
             else
             {
               // 没有启用验证，按原来的方式搜索所有子目录中的.git
-              var pathRepos = dir.GetDirectories(".git", SearchOption.AllDirectories)
-                  .Select(gitDir => gitDir.Parent)
-                  .Where(parent => parent != null)
-                  .ToList();
+              // 分批搜索，避免长时间阻塞UI
+              List<DirectoryInfo> pathRepos = await Task.Run(() =>
+              {
+                return dir.GetDirectories(".git", SearchOption.AllDirectories)
+                    .Select(gitDir => gitDir.Parent)
+                    .Where(parent => parent != null)
+                    .ToList();
+              });
 
-              _outputManager.UpdateOutput($"在路径 '{path}' 下找到 {pathRepos.Count} 个Git仓库");
+              await _outputManager.UpdateOutputAsync($"在路径 '{path}' 下找到 {pathRepos.Count} 个Git仓库");
               gitRepos.AddRange(pathRepos);
             }
           }
           catch (Exception ex)
           {
-            _outputManager.UpdateOutput($"扫描路径时出错: {ex.Message}");
+            await _outputManager.UpdateOutputAsync($"扫描路径时出错: {ex.Message}");
           }
         }
 
         _repoCount = gitRepos.Count;
-        _outputManager.UpdateOutput($"总共找到 {_repoCount} 个Git仓库");
+        await _outputManager.UpdateOutputAsync($"总共找到 {_repoCount} 个Git仓库");
 
         // 如果没有找到仓库，设置为较高进度并退出
         if (_repoCount == 0)
         {
-          _outputManager.UpdateProgressBar(90);
-          _outputManager.UpdateOutput("未找到任何Git仓库，扫描结束");
+          await _outputManager.UpdateProgressBarAsync(90);
+          await _outputManager.UpdateOutputAsync("未找到任何Git仓库，扫描结束");
           return commits;
         }
 
         // 设置为40%进度，表示开始处理仓库
-        _outputManager.UpdateProgressBar(40);
+        await _outputManager.UpdateProgressBarAsync(40);
+        await Task.Delay(100); // 短暂延迟让UI有时间刷新
 
         // 处理每个Git仓库，分配40%-95%的进度
         _currentRepo = 0;
         DateTime? earliestRepoDate = null;
 
-        // 使用Task.Run异步处理
-        await Task.Run(() =>
+        // 分批处理每个仓库，确保UI更新及时
+        for (int i = 0; i < gitRepos.Count; i++)
         {
-          foreach (var repo in gitRepos)
+          // 检查是否已手动停止
+          if (!_isRunning)
           {
-            // 检查是否已手动停止
-            if (!_isRunning)
-            {
-              _outputManager.UpdateOutput("处理仓库过程已手动停止");
-              return;
-            }
-
-            _currentRepo++;
-            // 更新处理仓库阶段的进度
-            int percentComplete = 40 + (int)((_currentRepo / (double)_repoCount) * 55);
-            _outputManager.UpdateProgressBar(percentComplete);
-            _outputManager.UpdateOutput($"处理仓库 [{_currentRepo}/{_repoCount}]: {repo.FullName}");
-
-            try
-            {
-              string currentDirectory = Directory.GetCurrentDirectory();
-              Directory.SetCurrentDirectory(repo.FullName);
-
-              // 获取仓库创建时间（第一次提交的时间）
-              var firstCommitProcess = new Process
-              {
-                StartInfo = new ProcessStartInfo
-                {
-                  FileName = "git",
-                  Arguments = "log --reverse --format=\"%ad\" --date=format:\"%Y-%m-%d %H:%M:%S\"",
-                  UseShellExecute = false,
-                  RedirectStandardOutput = true,
-                  CreateNoWindow = true,
-                  StandardOutputEncoding = Encoding.UTF8
-                }
-              };
-
-              firstCommitProcess.Start();
-              string firstCommitDateStr = firstCommitProcess.StandardOutput.ReadLine();
-              firstCommitProcess.WaitForExit();
-
-              if (!string.IsNullOrEmpty(firstCommitDateStr))
-              {
-                DateTime repoCreateDate = DateTime.ParseExact(firstCommitDateStr, "yyyy-MM-dd HH:mm:ss", null);
-                if (earliestRepoDate == null || repoCreateDate < earliestRepoDate)
-                {
-                  earliestRepoDate = repoCreateDate;
-                }
-
-                _outputManager.UpdateOutput($"   仓库创建时间: {firstCommitDateStr}");
-              }
-
-              // 构建Git命令参数
-              var arguments = "log";
-
-              if (!string.IsNullOrEmpty(since))
-              {
-                arguments += $" --since=\"{since}\"";
-              }
-
-              arguments += $" --until=\"{until}\"";
-              arguments += $" --pretty=format:\"{gitFormat}\"";
-              arguments += " --date=format:\"%Y-%m-%d %H:%M:%S\"";
-
-              if (!string.IsNullOrEmpty(author))
-              {
-                arguments += $" --author=\"{author}\"";
-              }
-
-              // 执行Git命令
-              var process = new Process
-              {
-                StartInfo = new ProcessStartInfo
-                {
-                  FileName = "git",
-                  Arguments = arguments,
-                  UseShellExecute = false,
-                  RedirectStandardOutput = true,
-                  RedirectStandardError = true,
-                  CreateNoWindow = true,
-                  StandardOutputEncoding = Encoding.UTF8,
-                  StandardErrorEncoding = Encoding.UTF8
-                }
-              };
-
-              process.Start();
-              var output = process.StandardOutput.ReadToEnd();
-              process.WaitForExit();
-
-              if (!string.IsNullOrEmpty(output))
-              {
-                var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-
-                foreach (var line in lines)
-                {
-                  // 检查是否已手动停止
-                  if (!_isRunning)
-                  {
-                    _outputManager.UpdateOutput("处理提交数据过程已手动停止");
-                    Directory.SetCurrentDirectory(currentDirectory);
-                    return;
-                  }
-
-                  if (string.IsNullOrEmpty(line))
-                    continue;
-
-                  try
-                  {
-                    var parts = line.Split('|');
-                    if (parts.Length >= gitFields.Count)
-                    {
-                      // 创建一个提交信息对象
-                      var commitObj = new CommitInfo
-                      {
-                        Repository = repo.Name,
-                        RepoPath = repo.FullName,
-                        RepoFolder = Path.GetFileName(repo.FullName)
-                      };
-
-                      // 根据选择的字段添加属性
-                      for (int i = 0; i < gitFields.Count; i++)
-                      {
-                        if (i < parts.Length) // 确保下标不会越界
-                        {
-                          var fieldName = gitFields[i];
-                          var fieldValue = parts[i];
-
-                          switch (fieldName)
-                          {
-                            case "CommitId":
-                              commitObj.CommitId = fieldValue;
-                              break;
-                            case "Author":
-                              commitObj.Author = fieldValue;
-                              break;
-                            case "Date":
-                              commitObj.Date = fieldValue;
-                              break;
-                            case "Message":
-                              commitObj.Message = fieldValue;
-                              break;
-                          }
-                        }
-                      }
-
-                      // 应用作者筛选
-                      bool shouldInclude = true;
-                      if (!string.IsNullOrEmpty(authorFilter) && commitObj.Author != null)
-                      {
-                        shouldInclude = false;
-                        var authors = authorFilter.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var authorPattern in authors)
-                        {
-                          string trimmedPattern = authorPattern.Trim();
-                          if (!string.IsNullOrEmpty(trimmedPattern) &&
-                                      commitObj.Author.IndexOf(trimmedPattern, StringComparison.OrdinalIgnoreCase) >= 0)
-                          {
-                            shouldInclude = true;
-                            break;
-                          }
-                        }
-                      }
-
-                      if (shouldInclude)
-                      {
-                        commits.Add(commitObj);
-                      }
-                    }
-                  }
-                  catch (Exception ex)
-                  {
-                    _outputManager.UpdateOutput($"处理提交记录时出错: {ex.Message}");
-                  }
-                }
-              }
-
-              // 恢复当前目录
-              Directory.SetCurrentDirectory(currentDirectory);
-            }
-            catch (Exception ex)
-            {
-              _outputManager.UpdateOutput($"警告: 处理仓库 '{repo.FullName}' 时出错: {ex.Message}");
-            }
+            await _outputManager.UpdateOutputAsync("处理仓库过程已手动停止");
+            return commits;
           }
-        });
+
+          var repo = gitRepos[i];
+          _currentRepo++;
+
+          // 更新处理仓库阶段的进度
+          int percentComplete = 40 + (int)((_currentRepo / (double)_repoCount) * 55);
+          await _outputManager.UpdateProgressBarAsync(percentComplete);
+          await _outputManager.UpdateOutputAsync($"处理仓库 [{_currentRepo}/{_repoCount}]: {repo.FullName}");
+          await Task.Delay(50); // 短暂延迟让UI有时间刷新
+
+          try
+          {
+            // 在异步任务中处理单个仓库
+            List<CommitInfo> repoCommits = await ProcessSingleRepositoryAsync(repo, since, until, author, authorFilter, gitFields, gitFormat);
+
+            // 提取最早的提交日期
+            DateTime? repoCreateDate = await GetRepositoryCreateDateAsync(repo);
+            if (repoCreateDate.HasValue)
+            {
+              if (earliestRepoDate == null || repoCreateDate < earliestRepoDate)
+              {
+                earliestRepoDate = repoCreateDate;
+              }
+              await _outputManager.UpdateOutputAsync($"   仓库创建时间: {repoCreateDate.Value.ToString("yyyy-MM-dd HH:mm:ss")}");
+            }
+
+            // 添加此仓库的提交记录
+            commits.AddRange(repoCommits);
+          }
+          catch (Exception ex)
+          {
+            await _outputManager.UpdateOutputAsync($"警告: 处理仓库 '{repo.FullName}' 时出错: {ex.Message}");
+          }
+        }
 
         // 替换进度条完成消息
-        _outputManager.UpdateOutput("所有仓库处理完成 (100%)");
+        await _outputManager.UpdateOutputAsync("所有仓库处理完成 (100%)");
 
         // 输出扫描信息
-        _outputManager.UpdateOutput("==== 扫描信息 ====");
+        await _outputManager.UpdateOutputAsync("==== 扫描信息 ====");
         if (string.IsNullOrEmpty(since))
         {
           if (earliestRepoDate.HasValue)
           {
             string earliestDateStr = earliestRepoDate.Value.ToString("yyyy-MM-dd HH:mm:ss");
-            _outputManager.UpdateOutput($"时间范围: 从仓库创建开始 ({earliestDateStr}) 至 {DateTime.Now.ToString("yyyy-MM-dd")}");
+            await _outputManager.UpdateOutputAsync($"时间范围: 从仓库创建开始 ({earliestDateStr}) 至 {DateTime.Now.ToString("yyyy-MM-dd")}");
           }
           else
           {
-            _outputManager.UpdateOutput($"时间范围: 从仓库创建开始 至 {DateTime.Now.ToString("yyyy-MM-dd")}");
+            await _outputManager.UpdateOutputAsync($"时间范围: 从仓库创建开始 至 {DateTime.Now.ToString("yyyy-MM-dd")}");
           }
         }
         else
         {
           // 显示真实的日期范围，而不是调整后的日期
           string displayUntil = DateTime.Parse(until).AddDays(-1).ToString("yyyy-MM-dd");
-          _outputManager.UpdateOutput($"时间范围: {since} 至 {displayUntil}");
+          await _outputManager.UpdateOutputAsync($"时间范围: {since} 至 {displayUntil}");
         }
 
         if (string.IsNullOrEmpty(author))
         {
-          _outputManager.UpdateOutput("提交作者: 所有作者");
+          await _outputManager.UpdateOutputAsync("提交作者: 所有作者");
         }
         else
         {
-          _outputManager.UpdateOutput($"提交作者: {author}");
+          await _outputManager.UpdateOutputAsync($"提交作者: {author}");
         }
 
         if (!string.IsNullOrEmpty(authorFilter))
         {
-          _outputManager.UpdateOutput($"作者过滤: {authorFilter}");
+          await _outputManager.UpdateOutputAsync($"作者过滤: {authorFilter}");
         }
 
-        _outputManager.UpdateOutput($"提取的Git字段: {string.Join(", ", gitFields)}");
-        _outputManager.UpdateOutput("===================");
+        await _outputManager.UpdateOutputAsync($"提取的Git字段: {string.Join(", ", gitFields)}");
+        await _outputManager.UpdateOutputAsync("===================");
 
         // 输出结果数量
-        _outputManager.UpdateOutput($"在指定时间范围内共找到 {commits.Count} 个提交");
+        await _outputManager.UpdateOutputAsync($"在指定时间范围内共找到 {commits.Count} 个提交");
 
         // 添加到最近使用的作者
         if (!string.IsNullOrEmpty(author))
@@ -648,20 +514,214 @@ namespace GitCommitsWPF.Utils
         }
 
         // 设置进度条到完成状态
-        _outputManager.UpdateProgressBar(100);
-        _outputManager.UpdateOutput("Git提交记录收集完成");
+        await _outputManager.UpdateProgressBarAsync(100);
+        await _outputManager.UpdateOutputAsync("Git提交记录收集完成");
       }
       catch (Exception ex)
       {
-        _outputManager.UpdateOutput($"收集Git提交时出错: {ex.Message}");
+        await _outputManager.UpdateOutputAsync($"收集Git提交时出错: {ex.Message}");
       }
       finally
       {
         _isRunning = false;
-        _outputManager.HideProgressBar();
+        await _outputManager.HideProgressBarAsync();
       }
 
       return commits;
+    }
+
+    // 新增方法：异步处理单个Git仓库
+    private async Task<List<CommitInfo>> ProcessSingleRepositoryAsync(DirectoryInfo repo, string since, string until, string author, string authorFilter, List<string> gitFields, string gitFormat)
+    {
+      List<CommitInfo> repoCommits = new List<CommitInfo>();
+
+      // 使用Task.Run在后台线程执行这个操作，避免阻塞UI线程
+      await Task.Run(async () =>
+      {
+        try
+        {
+          string currentDirectory = Directory.GetCurrentDirectory();
+          Directory.SetCurrentDirectory(repo.FullName);
+
+          // 构建Git命令参数
+          var arguments = "log";
+
+          if (!string.IsNullOrEmpty(since))
+          {
+            arguments += $" --since=\"{since}\"";
+          }
+
+          arguments += $" --until=\"{until}\"";
+          arguments += $" --pretty=format:\"{gitFormat}\"";
+          arguments += " --date=format:\"%Y-%m-%d %H:%M:%S\"";
+
+          if (!string.IsNullOrEmpty(author))
+          {
+            arguments += $" --author=\"{author}\"";
+          }
+
+          // 执行Git命令
+          var process = new Process
+          {
+            StartInfo = new ProcessStartInfo
+            {
+              FileName = "git",
+              Arguments = arguments,
+              UseShellExecute = false,
+              RedirectStandardOutput = true,
+              RedirectStandardError = true,
+              CreateNoWindow = true,
+              StandardOutputEncoding = Encoding.UTF8,
+              StandardErrorEncoding = Encoding.UTF8
+            }
+          };
+
+          process.Start();
+          var output = process.StandardOutput.ReadToEnd();
+          process.WaitForExit();
+
+          if (!string.IsNullOrEmpty(output))
+          {
+            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var line in lines)
+            {
+              // 检查是否已手动停止
+              if (!_isRunning)
+              {
+                await _outputManager.UpdateOutputAsync("处理提交数据过程已手动停止");
+                Directory.SetCurrentDirectory(currentDirectory);
+                return;
+              }
+
+              if (string.IsNullOrEmpty(line))
+                continue;
+
+              try
+              {
+                var parts = line.Split('|');
+                if (parts.Length >= gitFields.Count)
+                {
+                  // 创建一个提交信息对象
+                  var commitObj = new CommitInfo
+                  {
+                    Repository = repo.Name,
+                    RepoPath = repo.FullName,
+                    RepoFolder = Path.GetFileName(repo.FullName)
+                  };
+
+                  // 根据选择的字段添加属性
+                  for (int i = 0; i < gitFields.Count; i++)
+                  {
+                    if (i < parts.Length) // 确保下标不会越界
+                    {
+                      var fieldName = gitFields[i];
+                      var fieldValue = parts[i];
+
+                      switch (fieldName)
+                      {
+                        case "CommitId":
+                          commitObj.CommitId = fieldValue;
+                          break;
+                        case "Author":
+                          commitObj.Author = fieldValue;
+                          break;
+                        case "Date":
+                          commitObj.Date = fieldValue;
+                          break;
+                        case "Message":
+                          commitObj.Message = fieldValue;
+                          break;
+                      }
+                    }
+                  }
+
+                  // 应用作者筛选
+                  bool shouldInclude = true;
+                  if (!string.IsNullOrEmpty(authorFilter) && commitObj.Author != null)
+                  {
+                    shouldInclude = false;
+                    var authors = authorFilter.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var authorPattern in authors)
+                    {
+                      string trimmedPattern = authorPattern.Trim();
+                      if (!string.IsNullOrEmpty(trimmedPattern) &&
+                                  commitObj.Author.IndexOf(trimmedPattern, StringComparison.OrdinalIgnoreCase) >= 0)
+                      {
+                        shouldInclude = true;
+                        break;
+                      }
+                    }
+                  }
+
+                  if (shouldInclude)
+                  {
+                    repoCommits.Add(commitObj);
+                  }
+                }
+              }
+              catch (Exception ex)
+              {
+                await _outputManager.UpdateOutputAsync($"处理提交记录时出错: {ex.Message}");
+              }
+            }
+          }
+
+          // 恢复当前目录
+          Directory.SetCurrentDirectory(currentDirectory);
+        }
+        catch (Exception ex)
+        {
+          await _outputManager.UpdateOutputAsync($"处理仓库数据时出错: {ex.Message}");
+        }
+      });
+
+      return repoCommits;
+    }
+
+    // 新增方法：获取仓库创建日期
+    private async Task<DateTime?> GetRepositoryCreateDateAsync(DirectoryInfo repo)
+    {
+      DateTime? repoCreateDate = null;
+
+      await Task.Run(() =>
+      {
+        try
+        {
+          string currentDirectory = Directory.GetCurrentDirectory();
+          Directory.SetCurrentDirectory(repo.FullName);
+
+          var firstCommitProcess = new Process
+          {
+            StartInfo = new ProcessStartInfo
+            {
+              FileName = "git",
+              Arguments = "log --reverse --format=\"%ad\" --date=format:\"%Y-%m-%d %H:%M:%S\"",
+              UseShellExecute = false,
+              RedirectStandardOutput = true,
+              CreateNoWindow = true,
+              StandardOutputEncoding = Encoding.UTF8
+            }
+          };
+
+          firstCommitProcess.Start();
+          string firstCommitDateStr = firstCommitProcess.StandardOutput.ReadLine();
+          firstCommitProcess.WaitForExit();
+
+          if (!string.IsNullOrEmpty(firstCommitDateStr))
+          {
+            repoCreateDate = DateTime.ParseExact(firstCommitDateStr, "yyyy-MM-dd HH:mm:ss", null);
+          }
+
+          Directory.SetCurrentDirectory(currentDirectory);
+        }
+        catch
+        {
+          // 忽略错误，返回null
+        }
+      });
+
+      return repoCreateDate;
     }
   }
 }
