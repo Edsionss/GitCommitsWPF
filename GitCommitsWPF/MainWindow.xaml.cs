@@ -54,6 +54,9 @@ namespace GitCommitsWPF
     // LogOperationsManager实例，用于管理日志操作
     private LogOperationsManager _logOperationsManager;
 
+    // ExportManager实例，用于管理导出和保存结果
+    private ExportManager _exportManager;
+
     public MainWindow()
     {
       InitializeComponent();
@@ -74,6 +77,9 @@ namespace GitCommitsWPF
 
       // 初始化日志操作管理器
       _logOperationsManager = new LogOperationsManager(_dialogManager, _outputManager);
+
+      // 初始化导出管理器
+      _exportManager = new ExportManager(_dialogManager);
 
       // 初始化表格视图
       ConfigureDataGrid();
@@ -356,83 +362,24 @@ namespace GitCommitsWPF
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-      // 创建自定义对话框，替代原来的上下文菜单
-      var saveOptionsWindow = new Window
+      if (_filteredCommits.Count == 0)
       {
-        Title = "保存选项",
-        Width = 350,
-        Height = 180,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        Owner = this,
-        ResizeMode = ResizeMode.NoResize,
-        Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#f0f0f0"))
-      };
+        _dialogManager.ShowCustomMessageBox("提示", "没有可保存的提交记录。", false);
+        return;
+      }
 
-      // 创建内容面板
-      var grid = new Grid();
-      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-      // 提示文本
-      var promptText = new TextBlock
-      {
-        Text = "请选择保存方式：",
-        Margin = new Thickness(20, 20, 20, 10),
-        TextWrapping = TextWrapping.Wrap,
-        FontSize = 14,
-        VerticalAlignment = VerticalAlignment.Center,
-        HorizontalAlignment = HorizontalAlignment.Center
-      };
-      Grid.SetRow(promptText, 0);
-      grid.Children.Add(promptText);
-
-      // 按钮面板
-      var buttonPanel = new StackPanel
-      {
-        Orientation = Orientation.Horizontal,
-        HorizontalAlignment = HorizontalAlignment.Center,
-        Margin = new Thickness(0, 10, 0, 20)
-      };
-      Grid.SetRow(buttonPanel, 1);
-
-      // 保存到副本按钮
-      var saveToFileButton = new Button
-      {
-        Content = "保存到副本",
-        Padding = new Thickness(15, 8, 15, 8),
-        Margin = new Thickness(10),
-        MinWidth = 120,
-        Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#4CAF50")),
-        Foreground = System.Windows.Media.Brushes.White
-      };
-      saveToFileButton.Click += (s, args) =>
-      {
-        saveOptionsWindow.Close();
-        SaveToFile();
-      };
-
-      // 复制到剪贴板按钮
-      var copyToClipboardButton = new Button
-      {
-        Content = "复制到剪贴板",
-        Padding = new Thickness(15, 8, 15, 8),
-        Margin = new Thickness(10),
-        MinWidth = 120,
-        Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#2196F3")),
-        Foreground = System.Windows.Media.Brushes.White
-      };
-      copyToClipboardButton.Click += (s, args) =>
-      {
-        saveOptionsWindow.Close();
-        CopyResultToClipboard();
-      };
-
-      buttonPanel.Children.Add(saveToFileButton);
-      buttonPanel.Children.Add(copyToClipboardButton);
-      grid.Children.Add(buttonPanel);
-
-      saveOptionsWindow.Content = grid;
-      saveOptionsWindow.ShowDialog();
+      // 使用ExportManager显示保存选项对话框
+      _exportManager.ShowSaveOptionsDialog(this,
+        // 保存到文件的回调
+        () =>
+        {
+          SaveToFile();
+        },
+        // 复制到剪贴板的回调
+        () =>
+        {
+          CopyResultToClipboard();
+        });
     }
 
     private void SaveToFile()
@@ -440,19 +387,12 @@ namespace GitCommitsWPF
       if (string.IsNullOrEmpty(OutputPathTextBox.Text))
       {
         // 创建默认文件名：Git提交记录_年月日.csv
-        string defaultFileName = string.Format("Git提交记录_{0}.txt", DateTime.Now.ToString("yyyyMMdd"));
+        string defaultFileName = $"Git提交记录_{DateTime.Now.ToString("yyyyMMdd")}.txt";
 
-        var dialog = new SaveFileDialog
+        string outputPath = _exportManager.ShowSaveFileDialog(defaultFileName);
+        if (!string.IsNullOrEmpty(outputPath))
         {
-          Title = "保存结果",
-          Filter = "CSV文件|*.csv|文本文件|*.txt|HTML文件|*.html|JSON文件|*.json|XML文件|*.xml|所有文件|*.*",
-          DefaultExt = ".txt",
-          FileName = defaultFileName
-        };
-
-        if (dialog.ShowDialog() == true)
-        {
-          OutputPathTextBox.Text = dialog.FileName;
+          OutputPathTextBox.Text = outputPath;
         }
         else
         {
@@ -466,18 +406,14 @@ namespace GitCommitsWPF
         SaveResults(filePath);
 
         // 添加到最近保存位置
-        AddToSaveLocations(filePath);
-
-        // 使用自定义消息窗口替代MessageBox
-        ShowCustomMessageBox("结果已成功保存", string.Format("结果已成功保存到：{0}", filePath), true);
+        AddToSaveLocations(Path.GetDirectoryName(filePath));
 
         // 刷新结果页签的内容
         UpdateFormattedResultTextBox();
       }
       catch (Exception ex)
       {
-        // 使用自定义消息窗口替代MessageBox
-        ShowCustomMessageBox("保存错误", string.Format("保存文件时发生错误：{0}", ex.Message), false);
+        _dialogManager.ShowCustomMessageBox("保存错误", $"保存文件时发生错误：{ex.Message}", false);
       }
     }
 
@@ -485,120 +421,79 @@ namespace GitCommitsWPF
     {
       try
       {
-        // 准备要保存的内容，但不创建文件，而是复制到剪贴板
-        if (_allCommits.Count == 0)
+        if (_filteredCommits.Count == 0)
         {
-          System.Windows.Clipboard.SetText(_outputManager.OutputContent);
-        }
-        else
-        {
-          // 获取选择的字段
-          List<string> selectedFields = new List<string>();
-          if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
-          if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
-          if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
-          if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
-          if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
-          if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
-          if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
-
-          // 生成统计数据字符串(如果启用)
-          var statsOutput = new StringBuilder();
-          if (EnableStatsCheckBox.IsChecked == true)
-          {
-            statsOutput.AppendLine("\n======== 提交统计 ========\n");
-            GenerateStats(statsOutput);
-            statsOutput.AppendLine("\n==========================\n");
-          }
-
-          // 准备内容并复制到剪贴板
-          string format = FormatTextBox.Text;
-          if (!string.IsNullOrEmpty(format))
-          {
-            var formattedOutput = new StringBuilder();
-            var displayedRepos = new Dictionary<string, bool>();
-
-            // 如果启用了统计，先添加统计数据
-            if (EnableStatsCheckBox.IsChecked == true)
-            {
-              formattedOutput.Append(statsOutput.ToString());
-            }
-
-            foreach (var commit in _allCommits)
-            {
-              string line = format;
-
-              // 获取当前提交的仓库标识符
-              string repoKey = !string.IsNullOrEmpty(commit.RepoFolder) ? commit.RepoFolder : commit.Repository;
-
-              // 替换所有占位符
-              line = line.Replace("{Repository}",
-                  (!ShowRepeatedRepoNamesCheckBox.IsChecked.Value && displayedRepos.ContainsKey(repoKey)) ?
-                  new string(' ', repoKey.Length) : commit.Repository);
-
-              line = line.Replace("{RepoPath}", commit.RepoPath);
-
-              line = line.Replace("{RepoFolder}",
-                  (!ShowRepeatedRepoNamesCheckBox.IsChecked.Value && displayedRepos.ContainsKey(repoKey)) ?
-                  new string(' ', repoKey.Length) : commit.RepoFolder);
-
-              line = line.Replace("{CommitId}", commit.CommitId ?? "");
-              line = line.Replace("{Author}", commit.Author ?? "");
-              line = line.Replace("{Date}", commit.Date ?? "");
-              line = line.Replace("{Message}", commit.Message ?? "");
-
-              formattedOutput.AppendLine(line);
-
-              // 标记此仓库已显示
-              if (!displayedRepos.ContainsKey(repoKey))
-              {
-                displayedRepos[repoKey] = true;
-              }
-            }
-
-            System.Windows.Clipboard.SetText(formattedOutput.ToString());
-          }
-          else
-          {
-            // 如果没有指定格式，使用JSON格式复制到剪贴板
-            var filteredCommits = new List<Dictionary<string, string>>();
-
-            // 创建筛选后的对象列表
-            foreach (var commit in _allCommits)
-            {
-              var filteredCommit = new Dictionary<string, string>();
-
-              if (selectedFields.Contains("Repository")) filteredCommit["Repository"] = commit.Repository;
-              if (selectedFields.Contains("RepoPath")) filteredCommit["RepoPath"] = commit.RepoPath;
-              if (selectedFields.Contains("RepoFolder")) filteredCommit["RepoFolder"] = commit.RepoFolder;
-              if (selectedFields.Contains("CommitId")) filteredCommit["CommitId"] = commit.CommitId;
-              if (selectedFields.Contains("Author")) filteredCommit["Author"] = commit.Author;
-              if (selectedFields.Contains("Date")) filteredCommit["Date"] = commit.Date;
-              if (selectedFields.Contains("Message")) filteredCommit["Message"] = commit.Message;
-
-              filteredCommits.Add(filteredCommit);
-            }
-
-            // 合并统计数据和结果
-            string clipboardContent = "";
-            if (EnableStatsCheckBox.IsChecked == true)
-            {
-              clipboardContent = statsOutput.ToString() + Environment.NewLine;
-            }
-
-            clipboardContent += JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented);
-            System.Windows.Clipboard.SetText(clipboardContent);
-          }
+          _dialogManager.ShowCustomMessageBox("提示", "没有可复制的提交记录。", false);
+          return;
         }
 
-        // 刷新结果页签的内容
-        UpdateFormattedResultTextBox();
+        // 获取统计信息
+        var statsBuilder = new StringBuilder();
+        GenerateStats(statsBuilder);
+        string statsOutput = statsBuilder.ToString();
 
-        ShowCopySuccessMessageBox("复制成功", "结果已成功复制到剪贴板");
+        // 获取用户自定义格式模板
+        string formatTemplate = FormatTextBox.Text;
+
+        // 获取是否包含统计信息
+        bool includeStats = EnableStatsCheckBox.IsChecked == true;
+
+        // 获取选择的字段
+        List<string> selectedFields = new List<string>();
+        if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
+        if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
+        if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
+        if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
+        if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
+        if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
+        if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
+
+        // 复制结果到剪贴板
+        _exportManager.CopyResultToClipboard(_filteredCommits, statsOutput, includeStats, formatTemplate, selectedFields);
       }
       catch (Exception ex)
       {
-        ShowCustomMessageBox("复制错误", string.Format("复制到剪贴板时发生错误：{0}", ex.Message), false);
+        _dialogManager.ShowCustomMessageBox("复制错误", $"复制到剪贴板时发生错误：{ex.Message}", false);
+      }
+    }
+
+    private void SaveResults(string outputPath)
+    {
+      try
+      {
+        if (_filteredCommits.Count == 0)
+        {
+          _dialogManager.ShowCustomMessageBox("提示", "没有可保存的提交记录。", false);
+          return;
+        }
+
+        // 获取统计信息
+        var statsBuilder = new StringBuilder();
+        GenerateStats(statsBuilder);
+        string statsOutput = statsBuilder.ToString();
+
+        // 获取用户自定义格式模板
+        string formatTemplate = FormatTextBox.Text;
+
+        // 获取是否包含统计信息
+        bool includeStats = EnableStatsCheckBox.IsChecked == true;
+
+        // 获取选择的字段
+        List<string> selectedFields = new List<string>();
+        if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
+        if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
+        if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
+        if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
+        if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
+        if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
+        if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
+
+        // 保存结果
+        _exportManager.SaveResults(outputPath, _filteredCommits, statsOutput, includeStats, formatTemplate, selectedFields);
+      }
+      catch (Exception ex)
+      {
+        _dialogManager.ShowCustomMessageBox("错误", $"保存文件时出错: {ex.Message}", false);
       }
     }
 
@@ -1289,163 +1184,6 @@ namespace GitCommitsWPF
             formattedResultTextBox.Text = formattedContent;
           }
         });
-      }
-    }
-
-    private void SaveResults(string outputPath)
-    {
-      if (_allCommits.Count == 0)
-      {
-        File.WriteAllText(outputPath, _outputManager.OutputContent, Encoding.UTF8);
-        return;
-      }
-
-      // 获取选择的字段
-      List<string> selectedFields = new List<string>();
-      if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
-      if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
-      if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
-      if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
-      if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
-      if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
-      if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
-
-      // 生成统计数据字符串(如果启用)
-      var statsOutput = new StringBuilder();
-      if (EnableStatsCheckBox.IsChecked == true)
-      {
-        statsOutput.AppendLine("\n======== 提交统计 ========\n");
-        GenerateStats(statsOutput);
-        statsOutput.AppendLine("\n==========================\n");
-      }
-
-      // 应用格式并保存
-      string format = FormatTextBox.Text;
-      if (!string.IsNullOrEmpty(format))
-      {
-        var formattedOutput = new StringBuilder();
-        var displayedRepos = new Dictionary<string, bool>();
-
-        // 如果启用了统计，先添加统计数据
-        if (EnableStatsCheckBox.IsChecked == true)
-        {
-          formattedOutput.Append(statsOutput.ToString());
-        }
-
-        foreach (var commit in _allCommits)
-        {
-          string line = format;
-
-          // 获取当前提交的仓库标识符
-          string repoKey = !string.IsNullOrEmpty(commit.RepoFolder) ? commit.RepoFolder : commit.Repository;
-
-          // 替换所有占位符
-          line = line.Replace("{Repository}",
-              (!ShowRepeatedRepoNamesCheckBox.IsChecked.Value && displayedRepos.ContainsKey(repoKey)) ?
-              new string(' ', repoKey.Length) : commit.Repository);
-
-          line = line.Replace("{RepoPath}", commit.RepoPath);
-
-          line = line.Replace("{RepoFolder}",
-              (!ShowRepeatedRepoNamesCheckBox.IsChecked.Value && displayedRepos.ContainsKey(repoKey)) ?
-              new string(' ', repoKey.Length) : commit.RepoFolder);
-
-          line = line.Replace("{CommitId}", commit.CommitId ?? "");
-          line = line.Replace("{Author}", commit.Author ?? "");
-          line = line.Replace("{Date}", commit.Date ?? "");
-          line = line.Replace("{Message}", commit.Message ?? "");
-
-          formattedOutput.AppendLine(line);
-
-          // 标记此仓库已显示
-          if (!displayedRepos.ContainsKey(repoKey))
-          {
-            displayedRepos[repoKey] = true;
-          }
-        }
-
-        File.WriteAllText(outputPath, formattedOutput.ToString(), Encoding.UTF8);
-      }
-      else
-      {
-        // 如果没有指定格式，根据文件扩展名保存
-        string extension = Path.GetExtension(outputPath).ToLower();
-        var filteredCommits = new List<Dictionary<string, string>>();
-
-        // 创建筛选后的对象列表
-        foreach (var commit in _allCommits)
-        {
-          var filteredCommit = new Dictionary<string, string>();
-
-          if (selectedFields.Contains("Repository")) filteredCommit["Repository"] = commit.Repository;
-          if (selectedFields.Contains("RepoPath")) filteredCommit["RepoPath"] = commit.RepoPath;
-          if (selectedFields.Contains("RepoFolder")) filteredCommit["RepoFolder"] = commit.RepoFolder;
-          if (selectedFields.Contains("CommitId")) filteredCommit["CommitId"] = commit.CommitId;
-          if (selectedFields.Contains("Author")) filteredCommit["Author"] = commit.Author;
-          if (selectedFields.Contains("Date")) filteredCommit["Date"] = commit.Date;
-          if (selectedFields.Contains("Message")) filteredCommit["Message"] = commit.Message;
-
-          filteredCommits.Add(filteredCommit);
-        }
-
-        // 如果启用了统计，先保存统计内容
-        if (EnableStatsCheckBox.IsChecked == true && (extension == ".txt" || extension == ".html"))
-        {
-          switch (extension)
-          {
-            case ".txt":
-              SaveAsTextWithStats(outputPath, filteredCommits, statsOutput.ToString());
-              break;
-            case ".html":
-              SaveAsHtmlWithStats(outputPath, filteredCommits, statsOutput.ToString());
-              break;
-            default:
-              // 其他格式不支持统计数据的结构化表示，仍使用原来的保存方式
-              switch (extension)
-              {
-                case ".csv":
-                  SaveAsCsv(outputPath, filteredCommits);
-                  break;
-                case ".json":
-                  File.WriteAllText(outputPath, JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented), Encoding.UTF8);
-                  break;
-                case ".xml":
-                  SaveAsXml(outputPath, filteredCommits);
-                  break;
-                default:
-                  // 默认保存为文本
-                  SaveAsText(outputPath, filteredCommits);
-                  break;
-              }
-              break;
-          }
-        }
-        else
-        {
-          // 没有启用统计，使用原来的保存方式
-          switch (extension)
-          {
-            case ".csv":
-              SaveAsCsv(outputPath, filteredCommits);
-              break;
-            case ".json":
-              File.WriteAllText(outputPath, JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented), Encoding.UTF8);
-              break;
-            case ".txt":
-              SaveAsText(outputPath, filteredCommits);
-              break;
-            case ".html":
-              SaveAsHtml(outputPath, filteredCommits);
-              break;
-            case ".xml":
-              SaveAsXml(outputPath, filteredCommits);
-              break;
-            default:
-              // 默认保存为文本
-              SaveAsText(outputPath, filteredCommits);
-              break;
-          }
-        }
       }
     }
 
