@@ -27,6 +27,8 @@ using DockPanel = System.Windows.Controls.DockPanel;
 using GitCommitsWPF.Models;
 using GitCommitsWPF.Services;
 using GitCommitsWPF.Utils;
+using UtilsDataGridManager = GitCommitsWPF.Utils.DataGridManager;
+using ServicesDataGridManager = GitCommitsWPF.Services.DataGridManager;
 
 namespace GitCommitsWPF
 {
@@ -69,7 +71,7 @@ namespace GitCommitsWPF
     private FormattingManager _formattingManager = new FormattingManager();
 
     // DataGridManager实例，用于管理DataGrid相关功能
-    private DataGridManager _dataGridManager;
+    private UtilsDataGridManager _dataGridManager;
 
     // QueryExecutionManager实例，用于管理查询执行和结果处理
     private QueryExecutionManager _queryExecutionManager;
@@ -85,6 +87,19 @@ namespace GitCommitsWPF
 
     // FieldSelectionManager实例，用于管理字段选择相关功能
     private FieldSelectionManager _fieldSelectionManager = new FieldSelectionManager();
+
+    // StatisticsOptionsManager实例，用于管理统计选项相关功能
+    private StatisticsOptionsManager _statisticsOptionsManager = new StatisticsOptionsManager();
+
+    // RepositorySelectionManager实例，用于管理仓库选择相关功能
+    private RepositorySelectionManager _repositorySelectionManager;
+
+    // ClipboardManager实例，用于管理剪贴板相关功能
+    private ClipboardManager _clipboardManager;
+
+    // 用于防止TextChanged事件循环触发
+    private DispatcherTimer _pathsTextChangedTimer;
+    private bool _isPathsTextBeingProcessed = false;
 
     public MainWindow()
     {
@@ -111,20 +126,15 @@ namespace GitCommitsWPF
       // 初始化Git操作管理器
       _gitOperationsManager = new GitOperationsManager(_outputManager, _dialogManager, _authorManager);
 
-      // 初始化DataGrid管理器
-      _dataGridManager = new DataGridManager(_dialogManager);
-      _dataGridManager.Initialize(CommitsDataGrid,
-        (title, message, isSuccess) => _dialogManager.ShowCustomMessageBox(title, message, isSuccess, null),
-        () => FormatTextBox.Text);
+      // 初始化剪贴板管理器
+      _clipboardManager = new ClipboardManager(_dialogManager);
 
-      // 初始化查询执行管理器
-      _queryExecutionManager = new QueryExecutionManager(
-        _outputManager,
-        _gitOperationsManager,
+      // 初始化仓库选择管理器
+      _repositorySelectionManager = new RepositorySelectionManager(
         _dialogManager,
-        _statisticsManager,
-        _formattingManager,
-        _dataGridManager);
+        _locationManager,
+        _gitOperationsManager,
+        _outputManager);
 
       // 初始化路径浏览管理器
       _pathBrowserManager = new PathBrowserManager(
@@ -133,10 +143,42 @@ namespace GitCommitsWPF
         _locationManager,
         _gitOperationsManager,
         _outputManager);
+
+      // 设置PathBrowserManager对RepositorySelectionManager的引用
+      _pathBrowserManager.SetRepositorySelectionManager(_repositorySelectionManager);
+
+      // 初始化PathBrowserManager
       _pathBrowserManager.Initialize(
         PathsTextBox,
         VerifyGitPathsCheckBox,
         ChooseSystemCheckBox);
+
+      // 初始化仓库选择管理器
+      _repositorySelectionManager.Initialize(
+        PathsTextBox,
+        VerifyGitPathsCheckBox,
+        ChooseSystemCheckBox,
+        _pathBrowserManager);
+
+      // 初始化DataGrid管理器
+      _dataGridManager = new UtilsDataGridManager(_dialogManager);
+      _dataGridManager.Initialize(CommitsDataGrid,
+        (title, message, isSuccess, action) => _dialogManager.ShowCustomMessageBox(title, message, isSuccess, action),
+        () => FormatTextBox.Text);
+
+      // 初始化查询执行管理器 - 使用Services命名空间的DataGridManager进行类型转换
+      ServicesDataGridManager servicesDataGridManager = new ServicesDataGridManager(_dialogManager);
+      servicesDataGridManager.Initialize(CommitsDataGrid,
+        (title, message, isSuccess) => _dialogManager.ShowCustomMessageBox(title, message, isSuccess, (string)null),
+        () => FormatTextBox.Text);
+
+      _queryExecutionManager = new QueryExecutionManager(
+        _outputManager,
+        _gitOperationsManager,
+        _dialogManager,
+        _statisticsManager,
+        _formattingManager,
+        servicesDataGridManager);
 
       // 初始化作者对话框管理器
       _authorDialogManager = new AuthorDialogManager(
@@ -158,6 +200,13 @@ namespace GitCommitsWPF
         DateFieldCheckBox,
         MessageFieldCheckBox);
 
+      // 初始化统计选项管理器
+      _statisticsOptionsManager.Initialize(
+        EnableStatsCheckBox,
+        StatsByAuthorCheckBox,
+        StatsByRepoCheckBox,
+        StatsByDateCheckBox);
+
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
       {
@@ -165,6 +214,42 @@ namespace GitCommitsWPF
         {
           _authorManager.AddToRecentAuthors(AuthorTextBox.Text);
         }
+      };
+
+      // 监听路径文本框变化，检查并移除重复路径
+      PathsTextBox.TextChanged += (s, e) =>
+      {
+        // 如果正在处理文本变化，跳过
+        if (_isPathsTextBeingProcessed)
+          return;
+
+        // 取消之前的计时器（如果存在）
+        if (_pathsTextChangedTimer != null)
+        {
+          _pathsTextChangedTimer.Stop();
+        }
+
+        // 创建新的计时器
+        _pathsTextChangedTimer = new DispatcherTimer();
+        _pathsTextChangedTimer.Interval = TimeSpan.FromMilliseconds(1000); // 1秒延迟
+        _pathsTextChangedTimer.Tick += (sender, args) =>
+        {
+          _pathsTextChangedTimer.Stop();
+
+          // 设置标志位，防止循环调用
+          _isPathsTextBeingProcessed = true;
+
+          try
+          {
+            _repositorySelectionManager.CheckAndRemoveDuplicatePaths();
+          }
+          finally
+          {
+            // 恢复标志位
+            _isPathsTextBeingProcessed = false;
+          }
+        };
+        _pathsTextChangedTimer.Start();
       };
 
       // 加载扫描到的作者
@@ -226,7 +311,7 @@ namespace GitCommitsWPF
     // 验证路径是否为Git仓库
     private bool ValidatePath(string path)
     {
-      return _pathBrowserManager.ValidatePath(path);
+      return _repositorySelectionManager.ValidatePath(path);
     }
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -267,13 +352,13 @@ namespace GitCommitsWPF
         // 获取是否显示重复的仓库名
         () => ShowRepeatedRepoNamesCheckBox.IsChecked == true,
         // 获取是否启用统计
-        () => EnableStatsCheckBox.IsChecked == true,
+        () => _statisticsOptionsManager.IsStatsEnabled(),
         // 获取按作者统计
-        () => StatsByAuthorCheckBox.IsChecked == true,
+        () => _statisticsOptionsManager.IsStatsByAuthorEnabled(),
         // 获取按仓库统计
-        () => StatsByRepoCheckBox.IsChecked == true,
+        () => _statisticsOptionsManager.IsStatsByRepoEnabled(),
         // 获取按日期统计
-        () => StatsByDateCheckBox.IsChecked == true,
+        () => _statisticsOptionsManager.IsStatsByDateEnabled(),
         // 更新格式化结果文本框
         (textBox) =>
         {
@@ -373,22 +458,22 @@ namespace GitCommitsWPF
         var statsBuilder = new StringBuilder();
         _queryExecutionManager.GenerateStats(
             statsBuilder,
-            StatsByAuthorCheckBox.IsChecked == true,
-            StatsByRepoCheckBox.IsChecked == true,
-            StatsByDateCheckBox.IsChecked == true);
+            _statisticsOptionsManager.IsStatsByAuthorEnabled(),
+            _statisticsOptionsManager.IsStatsByRepoEnabled(),
+            _statisticsOptionsManager.IsStatsByDateEnabled());
         string statsOutput = statsBuilder.ToString();
 
         // 获取用户自定义格式模板
         string formatTemplate = FormatTextBox.Text;
 
         // 获取是否包含统计信息
-        bool includeStats = EnableStatsCheckBox.IsChecked == true;
+        bool includeStats = _statisticsOptionsManager.IsStatsEnabled();
 
         // 获取选择的字段 - 使用FieldSelectionManager
         List<string> selectedFields = _fieldSelectionManager.GetSelectedFields();
 
-        // 复制结果到剪贴板
-        _exportManager.CopyResultToClipboard(_filteredCommits, statsOutput, includeStats, formatTemplate, selectedFields);
+        // 使用ClipboardManager复制结果到剪贴板
+        _clipboardManager.CopyResultToClipboard(_filteredCommits, statsOutput, includeStats, formatTemplate, selectedFields);
       }
       catch (Exception ex)
       {
@@ -410,16 +495,16 @@ namespace GitCommitsWPF
         var statsBuilder = new StringBuilder();
         _queryExecutionManager.GenerateStats(
             statsBuilder,
-            StatsByAuthorCheckBox.IsChecked == true,
-            StatsByRepoCheckBox.IsChecked == true,
-            StatsByDateCheckBox.IsChecked == true);
+            _statisticsOptionsManager.IsStatsByAuthorEnabled(),
+            _statisticsOptionsManager.IsStatsByRepoEnabled(),
+            _statisticsOptionsManager.IsStatsByDateEnabled());
         string statsOutput = statsBuilder.ToString();
 
         // 获取用户自定义格式模板
         string formatTemplate = FormatTextBox.Text;
 
         // 获取是否包含统计信息
-        bool includeStats = EnableStatsCheckBox.IsChecked == true;
+        bool includeStats = _statisticsOptionsManager.IsStatsEnabled();
 
         // 获取选择的字段 - 使用FieldSelectionManager
         List<string> selectedFields = _fieldSelectionManager.GetSelectedFields();
@@ -444,7 +529,7 @@ namespace GitCommitsWPF
 
         // 生成统计数据(如果启用)
         var statsOutput = new StringBuilder();
-        bool enableStats = EnableStatsCheckBox.IsChecked == true;
+        bool enableStats = _statisticsOptionsManager.IsStatsEnabled();
 
         if (enableStats)
         {
@@ -454,9 +539,9 @@ namespace GitCommitsWPF
           _statisticsManager.GenerateStats(
               _allCommits,
               statsOutput,
-              StatsByAuthorCheckBox.IsChecked == true,
-              StatsByRepoCheckBox.IsChecked == true,
-              StatsByDateCheckBox.IsChecked == true);
+              _statisticsOptionsManager.IsStatsByAuthorEnabled(),
+              _statisticsOptionsManager.IsStatsByRepoEnabled(),
+              _statisticsOptionsManager.IsStatsByDateEnabled());
 
           statsOutput.AppendLine("\n==========================\n");
         }
@@ -498,7 +583,7 @@ namespace GitCommitsWPF
     // 显示复制成功的消息框（不显示文件相关按钮）
     private void ShowCopySuccessMessageBox(string title, string message)
     {
-      _dialogManager.ShowCopySuccessMessageBox(title, message);
+      _clipboardManager.ShowCopySuccessMessageBox(title, message);
     }
 
     // 更新输出内容
@@ -528,7 +613,7 @@ namespace GitCommitsWPF
 
     private void ClearPaths_Click(object sender, RoutedEventArgs e)
     {
-      _pathBrowserManager.ClearPaths();
+      _repositorySelectionManager.ClearPaths();
     }
 
     // 用于确认操作的自定义对话框
@@ -540,7 +625,14 @@ namespace GitCommitsWPF
     // 表格上下文菜单事件处理
     private void CopySelectedRows_Click(object sender, RoutedEventArgs e)
     {
-      _dataGridManager.CopySelectedRows();
+      // 获取选中的行
+      var selectedCommits = _dataGridManager.GetSelectedCommits();
+
+      // 获取格式模板
+      string formatTemplate = FormatTextBox.Text;
+
+      // 使用ClipboardManager复制选中的行
+      _clipboardManager.CopySelectedRows(selectedCommits, formatTemplate);
     }
 
     private void ExportSelectedToClipboard_Click(object sender, RoutedEventArgs e)
@@ -643,17 +735,16 @@ namespace GitCommitsWPF
 
       try
       {
-        // 获取路径列表
-        string pathsText = PathsTextBox.Text;
-        List<string> paths = new List<string>();
+        // 使用RepositorySelectionManager获取路径列表
+        List<string> paths = _repositorySelectionManager.GetPathsList();
 
         // 如果没有输入路径，弹出提示窗体
-        if (string.IsNullOrWhiteSpace(pathsText))
+        if (paths.Count == 0)
         {
           // 清空临时扫描路径
-          _pathBrowserManager.ClearTempScanPath();
+          _repositorySelectionManager.ClearTempScanPath();
 
-          bool shouldContinue = _pathBrowserManager.ShowGitPathConfirmDialog();
+          bool shouldContinue = _repositorySelectionManager.ShowGitPathConfirmDialog();
           if (!shouldContinue)
           {
             // 用户选择取消查找
@@ -662,20 +753,15 @@ namespace GitCommitsWPF
           }
 
           // 检查临时扫描路径是否已设置
-          if (string.IsNullOrWhiteSpace(_pathBrowserManager.TempScanPath))
+          if (string.IsNullOrWhiteSpace(_repositorySelectionManager.TempScanPath))
           {
             // 仍然没有路径，取消操作
             if (button != null) button.IsEnabled = true;
             return;
           }
 
-          // 使用_tempScanPath进行扫描
-          paths.Add(_pathBrowserManager.TempScanPath);
-        }
-        else
-        {
-          // 处理路径
-          paths.AddRange(pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries));
+          // 使用临时扫描路径进行扫描
+          paths.Add(_repositorySelectionManager.TempScanPath);
         }
 
         // 添加一个分隔线，开始新的日志记录
@@ -706,7 +792,7 @@ namespace GitCommitsWPF
         // 恢复按钮状态
         if (button != null) button.IsEnabled = true;
         // 清空临时扫描路径
-        _pathBrowserManager.ClearTempScanPath();
+        _repositorySelectionManager.ClearTempScanPath();
         _isRunning = false;
       }
     }

@@ -48,11 +48,69 @@ namespace GitCommitsWPF.Utils
     /// <summary>
     /// 检查路径是否为Git仓库
     /// </summary>
-    /// <param name="path">路径</param>
+    /// <param name="path">要检查的路径</param>
     /// <returns>是否为Git仓库</returns>
     public bool IsGitRepository(string path)
     {
-      return GitService.IsGitRepository(path);
+      try
+      {
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+        {
+          return false;
+        }
+
+        // 检查.git目录是否存在
+        string gitDir = Path.Combine(path, ".git");
+        if (Directory.Exists(gitDir))
+        {
+          return true;
+        }
+
+        // 尝试执行git命令检查
+        bool commandResult = false;
+        string currentDirectory = Directory.GetCurrentDirectory();
+
+        try
+        {
+          Directory.SetCurrentDirectory(path);
+
+          // 执行git命令验证是否为Git仓库
+          using (var process = new Process())
+          {
+            process.StartInfo = new ProcessStartInfo
+            {
+              FileName = "git",
+              Arguments = "rev-parse --is-inside-work-tree",
+              UseShellExecute = false,
+              RedirectStandardOutput = true,
+              CreateNoWindow = true,
+              StandardOutputEncoding = Encoding.UTF8
+            };
+
+            process.Start();
+            string output = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit();
+
+            commandResult = process.ExitCode == 0 && output.ToLower() == "true";
+          }
+        }
+        catch
+        {
+          // 命令执行失败，不是Git仓库
+          commandResult = false;
+        }
+        finally
+        {
+          // 恢复原来的目录
+          Directory.SetCurrentDirectory(currentDirectory);
+        }
+
+        return commandResult;
+      }
+      catch (Exception)
+      {
+        return false;
+      }
     }
 
     /// <summary>

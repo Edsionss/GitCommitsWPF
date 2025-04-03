@@ -265,5 +265,74 @@ namespace GitCommitsWPF.Utils
       confirmWindow.ShowDialog();
       return result;
     }
+
+    /// <summary>
+    /// 显示自定义消息对话框，支持可选的Action回调
+    /// </summary>
+    /// <param name="title">对话框标题</param>
+    /// <param name="message">显示的消息内容</param>
+    /// <param name="isSuccess">是否为成功消息（影响样式）</param>
+    /// <param name="action">按钮点击时执行的回调</param>
+    public void ShowCustomMessageBox(string title, string message, bool isSuccess, Action action)
+    {
+      // 创建自定义消息窗口
+      var customMessageWindow = new Window
+      {
+        Title = title,
+        Width = 400,
+        Height = 200,
+        WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        Owner = _ownerWindow,
+        ResizeMode = ResizeMode.NoResize,
+        Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#f0f0f0"))
+      };
+
+      // 创建内容面板
+      var grid = new Grid();
+      grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+      // 消息文本
+      var messageText = new TextBlock
+      {
+        Text = message,
+        Margin = new Thickness(20),
+        TextWrapping = TextWrapping.Wrap,
+        VerticalAlignment = VerticalAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Center
+      };
+      Grid.SetRow(messageText, 0);
+      grid.Children.Add(messageText);
+
+      // 按钮面板
+      var buttonPanel = new StackPanel
+      {
+        Orientation = Orientation.Horizontal,
+        HorizontalAlignment = HorizontalAlignment.Center,
+        Margin = new Thickness(0, 0, 0, 20)
+      };
+      Grid.SetRow(buttonPanel, 1);
+
+      // 确定按钮
+      var okButton = new Button
+      {
+        Content = "确定",
+        Padding = new Thickness(15, 5, 15, 5),
+        Margin = new Thickness(10),
+        MinWidth = 80
+      };
+      okButton.Click += (s, e) =>
+      {
+        customMessageWindow.Close();
+        action?.Invoke();
+      };
+
+      buttonPanel.Children.Add(okButton);
+      grid.Children.Add(buttonPanel);
+      customMessageWindow.Content = grid;
+
+      // 显示窗口
+      customMessageWindow.ShowDialog();
+    }
   }
 }
