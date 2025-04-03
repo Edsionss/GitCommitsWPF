@@ -147,7 +147,8 @@ namespace GitCommitsWPF.Views
     /// 从已有提交中初始化作者列表（如果最近作者列表为空）
     /// </summary>
     /// <param name="commits">提交信息列表</param>
-    public void InitializeFromCommits(IEnumerable<Models.CommitInfo> commits)
+    /// <returns>是否成功初始化</returns>
+    public bool InitializeFromCommits(IEnumerable<Models.CommitInfo> commits)
     {
       // 如果最近作者列表为空，则尝试从已有提交中收集
       if (_authorManager.RecentAuthors.Count == 0 && commits != null)
@@ -172,14 +173,44 @@ namespace GitCommitsWPF.Views
 
           // 刷新列表
           RefreshRecentAuthors();
+          return true;
         }
         else
         {
           _dialogManager.ShowCustomMessageBox("提示", "尚未找到任何作者信息。请先执行查询或添加作者。", false);
-          DialogResult = false;
-          Close();
+          return false;
         }
       }
+
+      return true;
+    }
+
+    /// <summary>
+    /// 初始化扫描作者列表，并自动切换到扫描作者标签页
+    /// </summary>
+    /// <param name="authors">扫描到的作者列表</param>
+    /// <returns>是否成功初始化</returns>
+    public bool InitializeFromScanResults(List<string> authors)
+    {
+      if (authors == null || authors.Count == 0)
+      {
+        _dialogManager.ShowCustomMessageBox("提示", "扫描未找到任何作者信息。", false);
+        return false;
+      }
+
+      // 将扫描到的作者添加到扫描作者列表
+      _authorManager.AddScannedAuthors(authors);
+
+      // 刷新扫描作者列表
+      RefreshScannedAuthors();
+
+      // 切换到扫描作者标签页
+      AuthorTabControl.SelectedItem = ScannedTab;
+
+      // 如果有搜索内容，清除它
+      SearchBox.Clear();
+
+      return true;
     }
   }
 }
