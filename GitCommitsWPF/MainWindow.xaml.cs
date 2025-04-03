@@ -77,6 +77,9 @@ namespace GitCommitsWPF
     // PathBrowserManager实例，用于管理路径选择和位置管理的UI交互
     private PathBrowserManager _pathBrowserManager;
 
+    // AuthorDialogManager实例，用于管理作者选择对话框相关功能
+    private AuthorDialogManager _authorDialogManager;
+
     public MainWindow()
     {
       InitializeComponent();
@@ -133,6 +136,13 @@ namespace GitCommitsWPF
         PathsTextBox,
         VerifyGitPathsCheckBox,
         ChooseSystemCheckBox);
+
+      // 初始化作者对话框管理器
+      _authorDialogManager = new AuthorDialogManager(
+        this,
+        _authorManager,
+        _dialogManager,
+        _gitOperationsManager);
 
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
@@ -705,18 +715,13 @@ namespace GitCommitsWPF
         // 使用GitOperationsManager扫描作者
         _isRunning = true;
 
-        // 使用GitOperationsManager异步扫描Git作者
-        List<string> authors = await _gitOperationsManager.ScanGitAuthorsAsync(paths);
+        // 使用AuthorDialogManager扫描并显示作者选择对话框
+        string selectedAuthor = await _authorDialogManager.ScanAndShowAuthorSelectionDialogAsync(paths);
 
-        // 检查结果
-        if (authors.Count > 0)
+        // 如果选择了作者，更新作者文本框
+        if (!string.IsNullOrEmpty(selectedAuthor))
         {
-          // 显示作者选择对话框
-          ShowAuthorSelectionDialog(authors);
-        }
-        else
-        {
-          _dialogManager.ShowCustomMessageBox("提示", "未找到任何Git作者信息", false);
+          AuthorTextBox.Text = selectedAuthor;
         }
       }
       catch (Exception ex)
@@ -731,93 +736,6 @@ namespace GitCommitsWPF
         // 清空临时扫描路径
         _pathBrowserManager.ClearTempScanPath();
         _isRunning = false;
-      }
-    }
-
-    // 从Git仓库获取作者信息
-    private void ScanGitAuthors(DirectoryInfo repo, List<string> authors)
-    {
-      try
-      {
-        string currentDirectory = Directory.GetCurrentDirectory();
-        Directory.SetCurrentDirectory(repo.FullName);
-
-        UpdateOutput(string.Format("正在从仓库获取作者信息: {0}", repo.FullName));
-
-        // 执行git命令获取所有作者
-        var process = new Process
-        {
-          StartInfo = new ProcessStartInfo
-          {
-            FileName = "git",
-            Arguments = "log --format=\"%an\" --all",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8
-          }
-        };
-
-        process.Start();
-        string output = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
-
-        // 解析输出，添加作者
-        var newAuthors = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-            .Where(author => !string.IsNullOrWhiteSpace(author))
-            .ToList();
-
-        authors.AddRange(newAuthors);
-
-        // 也添加到扫描作者列表
-        _authorManager.AddScannedAuthors(newAuthors);
-
-        UpdateOutput(string.Format("从仓库 '{0}' 找到 {1} 个作者", repo.Name, newAuthors.Count));
-
-        // 恢复当前目录
-        Directory.SetCurrentDirectory(currentDirectory);
-      }
-      catch (Exception ex)
-      {
-        UpdateOutput(string.Format("获取仓库作者时出错: {0}", ex.Message));
-      }
-    }
-
-    // 显示作者选择对话框
-    private void ShowAuthorSelectionDialog(List<string> authors)
-    {
-      // 创建并显示作者选择窗口
-      var authorSelectionWindow = new Views.AuthorSelectionWindow(_authorManager, _dialogManager)
-      {
-        Owner = this
-      };
-
-      // 初始化扫描作者列表，并自动切换到扫描作者标签页
-      if (authorSelectionWindow.InitializeFromScanResults(authors))
-      {
-        if (authorSelectionWindow.ShowDialog() == true && !string.IsNullOrEmpty(authorSelectionWindow.SelectedAuthor))
-        {
-          AuthorTextBox.Text = authorSelectionWindow.SelectedAuthor;
-        }
-      }
-    }
-
-    // 显示作者选择对话框（从最近作者中选择）
-    private void ShowRecentAuthorSelectionDialog()
-    {
-      // 创建并显示作者选择窗口
-      var authorSelectionWindow = new Views.AuthorSelectionWindow(_authorManager, _dialogManager)
-      {
-        Owner = this
-      };
-
-      // 从已有提交中初始化作者列表（如果最近作者列表为空）
-      if (authorSelectionWindow.InitializeFromCommits(_allCommits))
-      {
-        if (authorSelectionWindow.ShowDialog() == true && !string.IsNullOrEmpty(authorSelectionWindow.SelectedAuthor))
-        {
-          AuthorTextBox.Text = authorSelectionWindow.SelectedAuthor;
-        }
       }
     }
 
@@ -863,12 +781,15 @@ namespace GitCommitsWPF
     // 最近使用
     private void LastAuthor_Click(object sender, RoutedEventArgs e)
     {
-      // 显示最近作者选择对话框
-      ShowRecentAuthorSelectionDialog();
+      // 使用AuthorDialogManager显示最近作者选择对话框
+      string selectedAuthor = _authorDialogManager.ShowRecentAuthorSelectionDialog(_allCommits);
 
-      // 如果作者文本框有内容，应用筛选
-      if (!string.IsNullOrEmpty(AuthorTextBox.Text))
+      // 如果选择了作者，更新作者文本框
+      if (!string.IsNullOrEmpty(selectedAuthor))
       {
+        AuthorTextBox.Text = selectedAuthor;
+
+        // 如果作者文本框有内容，应用筛选
         ApplyFilter();
       }
     }
