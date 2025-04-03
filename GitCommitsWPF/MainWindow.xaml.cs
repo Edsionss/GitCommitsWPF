@@ -83,9 +83,6 @@ namespace GitCommitsWPF
     // ClipboardManager实例，用于管理剪贴板相关功能
     private ClipboardManager _clipboardManager;
 
-    // CopySelectedRows实例，用于管理选中行复制功能
-    private CopySelectedRows _copySelectedRows;
-
     // 用于防止TextChanged事件循环触发
     private bool _isPathsTextBeingProcessed = false;
 
@@ -116,9 +113,6 @@ namespace GitCommitsWPF
 
       // 初始化剪贴板管理器
       _clipboardManager = new ClipboardManager(_dialogManager, _resultFormattingManager, _formattingManager, _statisticsManager);
-
-      // 初始化复制选定行管理器
-      _copySelectedRows = new CopySelectedRows(_dialogManager, _resultFormattingManager, _formattingManager);
 
       // 初始化仓库选择管理器
       _repositorySelectionManager = new RepositorySelectionManager(
@@ -546,8 +540,8 @@ namespace GitCommitsWPF
       // 获取格式模板
       string formatTemplate = FormatTextBox.Text;
 
-      // 使用CopySelectedRows复制选中的行
-      _copySelectedRows.CopyRowsToClipboard(selectedCommits, formatTemplate);
+      // 使用ClipboardManager复制选中的行
+      _clipboardManager.CopySelectedRows(selectedCommits, formatTemplate);
     }
 
     private void ExportSelectedToClipboard_Click(object sender, RoutedEventArgs e)

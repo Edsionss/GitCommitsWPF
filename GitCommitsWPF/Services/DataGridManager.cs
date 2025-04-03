@@ -80,50 +80,11 @@ namespace GitCommitsWPF.Services
     }
 
     /// <summary>
-    /// 复制选中的行
+    /// 获取选中的行
     /// </summary>
-    public void CopySelectedRows()
+    public List<CommitInfo> GetSelectedCommits()
     {
-      try
-      {
-        var selectedItems = _commitsDataGrid.SelectedItems.Cast<CommitInfo>().ToList();
-        if (selectedItems.Count == 0) return;
-
-        StringBuilder clipboardText = new StringBuilder();
-        string formatTemplate = _getFormatText();
-
-        foreach (var item in selectedItems)
-        {
-          string line = "";
-
-          // 使用和显示相同的格式
-          if (!string.IsNullOrEmpty(formatTemplate))
-          {
-            line = formatTemplate;
-            line = line.Replace("{Repository}", item.Repository)
-                .Replace("{RepoPath}", item.RepoPath)
-                .Replace("{RepoFolder}", item.RepoFolder)
-                .Replace("{CommitId}", item.CommitId)
-                .Replace("{Author}", item.Author)
-                .Replace("{Date}", item.Date)
-                .Replace("{Message}", item.Message);
-          }
-          else
-          {
-            // 默认格式
-            line = string.Format("{0}: {1}", item.Repository, item.Message);
-          }
-
-          clipboardText.AppendLine(line);
-        }
-
-        System.Windows.Clipboard.SetText(clipboardText.ToString());
-        _showMessageBoxAction("复制成功", string.Format("已复制 {0} 行数据到剪贴板", _commitsDataGrid.SelectedItems.Count), false);
-      }
-      catch (Exception ex)
-      {
-        _showMessageBoxAction("错误", string.Format("复制到剪贴板时出错: {0}", ex.Message), false);
-      }
+      return _commitsDataGrid.SelectedItems.Cast<CommitInfo>().ToList();
     }
 
     /// <summary>
