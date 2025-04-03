@@ -66,8 +66,14 @@ namespace GitCommitsWPF.Utils
             _endDatePicker.IsEnabled = false;
             break;
           case "week":
-            _startDatePicker.SelectedDate = DateTime.Today.AddDays(-7);
-            _endDatePicker.SelectedDate = DateTime.Today;
+            // 计算本周一和本周日
+            DateTime today = DateTime.Today;
+            int daysUntilMonday = ((int)today.DayOfWeek == 0 ? 7 : (int)today.DayOfWeek) - 1;
+            DateTime monday = today.AddDays(-daysUntilMonday);
+            DateTime sunday = monday.AddDays(6);
+
+            _startDatePicker.SelectedDate = monday;
+            _endDatePicker.SelectedDate = sunday;
             _startDatePicker.IsEnabled = false;
             _endDatePicker.IsEnabled = false;
             break;
@@ -149,10 +155,23 @@ namespace GitCommitsWPF.Utils
           until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
           break;
         case "week":
-          // 使用指定的startDate，如果为null则使用7天前
-          since = startDate?.ToString("yyyy-MM-dd") ?? DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd");
-          // 使用指定的endDate，如果为null则使用当天
-          until = (endDate?.AddDays(1) ?? DateTime.Today.AddDays(1)).ToString("yyyy-MM-dd");
+          if (startDate.HasValue && endDate.HasValue)
+          {
+            // 使用用户选择的日期范围
+            since = startDate.Value.ToString("yyyy-MM-dd");
+            until = endDate.Value.AddDays(1).ToString("yyyy-MM-dd"); // 增加一天以包括结束日期
+          }
+          else
+          {
+            // 计算本周一和下周一
+            DateTime today = DateTime.Today;
+            int daysUntilMonday = ((int)today.DayOfWeek == 0 ? 7 : (int)today.DayOfWeek) - 1;
+            DateTime monday = today.AddDays(-daysUntilMonday);
+            DateTime nextMonday = monday.AddDays(7);
+
+            since = monday.ToString("yyyy-MM-dd");
+            until = nextMonday.ToString("yyyy-MM-dd");
+          }
           break;
         case "month":
           // 使用指定的startDate，如果为null则使用1个月前
