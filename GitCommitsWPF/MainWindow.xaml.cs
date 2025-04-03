@@ -1,29 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Forms;
-using System.Windows.Threading;
-using System.Xml;
-using Microsoft.Win32;
 using Newtonsoft.Json;
-using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
-using FolderBrowserDialog = System.Windows.Forms.FolderBrowserDialog;
-using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
-using MessageBox = System.Windows.MessageBox;
 using Button = System.Windows.Controls.Button;
-using ListBox = System.Windows.Controls.ListBox;
-using Orientation = System.Windows.Controls.Orientation;
-using HorizontalAlignment = System.Windows.HorizontalAlignment;
-using Formatting = Newtonsoft.Json.Formatting;
-using TabControl = System.Windows.Controls.TabControl;
-using TabItem = System.Windows.Controls.TabItem;
-using DockPanel = System.Windows.Controls.DockPanel;
 using GitCommitsWPF.Models;
 using GitCommitsWPF.Services;
 using GitCommitsWPF.Utils;
@@ -35,8 +16,8 @@ namespace GitCommitsWPF
   public partial class MainWindow : Window
   {
     private List<CommitInfo> _allCommits = new List<CommitInfo>();
-    private int _repoCount = 0;
-    private int _currentRepo = 0;
+    // private int _repoCount = 0;
+    // private int _currentRepo = 0;
     private bool _isRunning = false;
     private List<CommitInfo> _filteredCommits = new List<CommitInfo>(); // 添加筛选后的提交列表
 
@@ -269,11 +250,11 @@ namespace GitCommitsWPF
     }
 
     // 配置DataGrid的属性和行为
-    private void ConfigureDataGrid()
-    {
-      // 使用DataGridManager进行配置，无需在此处直接配置
-      // 已在构造函数中通过_dataGridManager.Initialize完成配置
-    }
+    // private void ConfigureDataGrid()
+    // {
+    //   // 使用DataGridManager进行配置，无需在此处直接配置
+    //   // 已在构造函数中通过_dataGridManager.Initialize完成配置
+    // }
 
     // 加载最近使用的位置
     private void LoadRecentLocations()
@@ -287,17 +268,6 @@ namespace GitCommitsWPF
       _locationManager.SaveRecentLocations();
     }
 
-    // 添加路径到最近位置列表
-    private void AddToRecentLocations(string path)
-    {
-      _locationManager.AddToRecentLocations(path);
-    }
-
-    // 验证路径是否为Git仓库
-    private bool ValidatePath(string path)
-    {
-      return _repositorySelectionManager.ValidatePath(path);
-    }
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)
     {
@@ -565,11 +535,7 @@ namespace GitCommitsWPF
       }
     }
 
-    // 显示复制成功的消息框（不显示文件相关按钮）
-    private void ShowCopySuccessMessageBox(string title, string message)
-    {
-      _clipboardManager.ShowCopySuccessMessageBox(title, message);
-    }
+
 
     // 更新输出内容
     private void UpdateOutput(string message)
@@ -577,11 +543,7 @@ namespace GitCommitsWPF
       _outputManager.UpdateOutput(message);
     }
 
-    // 更新进度条
-    private void UpdateProgressBar(int value)
-    {
-      _outputManager.UpdateProgressBar(value);
-    }
+
 
     // 添加最近位置按钮点击事件
     private void AddRecentLocation_Click(object sender, RoutedEventArgs e)
@@ -600,13 +562,6 @@ namespace GitCommitsWPF
     {
       _repositorySelectionManager.ClearPaths();
     }
-
-    // 用于确认操作的自定义对话框
-    private bool ShowCustomConfirmDialog(string title, string message)
-    {
-      return _dialogManager.ShowCustomConfirmDialog(title, message);
-    }
-
     // 表格上下文菜单事件处理
     private void CopySelectedRows_Click(object sender, RoutedEventArgs e)
     {
