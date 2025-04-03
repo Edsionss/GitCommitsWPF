@@ -51,6 +51,9 @@ namespace GitCommitsWPF
     // DialogManager实例，用于管理对话框
     private DialogManager _dialogManager;
 
+    // LogOperationsManager实例，用于管理日志操作
+    private LogOperationsManager _logOperationsManager;
+
     public MainWindow()
     {
       InitializeComponent();
@@ -68,6 +71,9 @@ namespace GitCommitsWPF
 
       // 初始化对话框管理器
       _dialogManager = new DialogManager(this);
+
+      // 初始化日志操作管理器
+      _logOperationsManager = new LogOperationsManager(_dialogManager, _outputManager);
 
       // 初始化表格视图
       ConfigureDataGrid();
@@ -2771,72 +2777,19 @@ namespace GitCommitsWPF
     // 复制日志
     private void CopyLog_Click(object sender, RoutedEventArgs e)
     {
-      try
-      {
-        // 获取日志内容
-        string logContent = ResultTextBox.Text;
-        if (string.IsNullOrEmpty(logContent))
-        {
-          ShowCustomMessageBox("提示", "日志内容为空，无法复制。", false);
-          return;
-        }
-
-        // 复制到剪贴板
-        System.Windows.Clipboard.SetText(logContent);
-        ShowCustomMessageBox("成功", "日志内容已复制到剪贴板。", false);
-      }
-      catch (Exception ex)
-      {
-        ShowCustomMessageBox("错误", string.Format("复制日志时出错: {0}", ex.Message), false);
-      }
+      _logOperationsManager.CopyLog(ResultTextBox.Text);
     }
 
     // 保存日志
     private void SaveLog_Click(object sender, RoutedEventArgs e)
     {
-      try
-      {
-        // 获取日志内容
-        string logContent = ResultTextBox.Text;
-        if (string.IsNullOrEmpty(logContent))
-        {
-          ShowCustomMessageBox("提示", "日志内容为空，无法保存。", false);
-          return;
-        }
-
-        // 创建默认文件名：Git日志_年月日时分秒.log
-        string defaultFileName = string.Format("Git日志_{0}.log", DateTime.Now.ToString("yyyyMMdd_HHmmss"));
-
-        // 显示保存文件对话框
-        var dialog = new SaveFileDialog
-        {
-          Title = "保存日志",
-          Filter = "日志文件|*.log|文本文件|*.txt|所有文件|*.*",
-          DefaultExt = ".log",
-          FileName = defaultFileName
-        };
-
-        if (dialog.ShowDialog() == true)
-        {
-          // 保存日志内容到文件
-          File.WriteAllText(dialog.FileName, logContent, Encoding.UTF8);
-          ShowCustomMessageBox("成功", string.Format("日志已保存到: {0}", dialog.FileName), true);
-        }
-      }
-      catch (Exception ex)
-      {
-        ShowCustomMessageBox("错误", string.Format("保存日志时出错: {0}", ex.Message), false);
-      }
+      _logOperationsManager.SaveLog(ResultTextBox.Text);
     }
 
     // 清空日志
     private void CleanLog_Click(object sender, RoutedEventArgs e)
     {
-      if (ShowCustomConfirmDialog("确认", "确定要清除所有日志吗？"))
-      {
-        _outputManager.ClearOutput();
-        UpdateOutput("日志已清除");
-      }
+      _logOperationsManager.CleanLog();
     }
 
     // 停止查询
