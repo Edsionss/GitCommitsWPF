@@ -12,19 +12,41 @@ namespace GitCommitsWPF.Utils
   public class ClipboardManager
   {
     private readonly DialogManager _dialogManager;
+    private readonly FormattingManager _formattingManager;
+    private readonly StatisticsManager _statisticsManager;
+    private ResultFormattingManager _resultFormattingManager;
 
-    public ClipboardManager(DialogManager dialogManager)
+    public ClipboardManager(
+        DialogManager dialogManager,
+        ResultFormattingManager resultFormattingManager = null,
+        FormattingManager formattingManager = null,
+        StatisticsManager statisticsManager = null)
     {
       _dialogManager = dialogManager ?? throw new ArgumentNullException(nameof(dialogManager));
+      _resultFormattingManager = resultFormattingManager;
+      _formattingManager = formattingManager;
+      _statisticsManager = statisticsManager;
     }
 
-    // 将结果复制到剪贴板
+    /// <summary>
+    /// 设置ResultFormattingManager实例
+    /// </summary>
+    /// <param name="resultFormattingManager">ResultFormattingManager实例</param>
+    public void SetResultFormattingManager(ResultFormattingManager resultFormattingManager)
+    {
+      _resultFormattingManager = resultFormattingManager;
+    }
+
+    // 将结果复制到剪贴板 - 使用完整格式化选项
     public void CopyResultToClipboard(
         List<CommitInfo> commits,
-        string statsOutput,
         bool includeStats,
+        bool statsByAuthor,
+        bool statsByRepo,
+        bool statsByDate,
         string formatTemplate,
-        List<string> selectedFields)
+        List<string> selectedFields,
+        bool showRepeatedRepoNames)
     {
       try
       {
@@ -35,40 +57,74 @@ namespace GitCommitsWPF.Utils
         }
 
         // 准备结果文本
-        var resultBuilder = new StringBuilder();
+        string result;
 
-        // 添加统计信息(如果启用)
-        if (includeStats && !string.IsNullOrEmpty(statsOutput))
+        // 如果ResultFormattingManager可用，使用它生成格式化内容
+        if (_resultFormattingManager != null)
         {
-          resultBuilder.AppendLine("======== 提交统计 ========");
-          resultBuilder.AppendLine();
-          resultBuilder.AppendLine(statsOutput);
-          resultBuilder.AppendLine("==========================");
-          resultBuilder.AppendLine();
-        }
+          // 使用内存TextBox模拟结果格式化
+          var tempTextBox = new System.Windows.Controls.TextBox();
 
-        // 添加提交记录
-        if (!string.IsNullOrEmpty(formatTemplate))
-        {
-          // 使用自定义格式模板
-          foreach (var commit in commits)
-          {
-            string formattedLine = FormatCommitLine(commit, formatTemplate, selectedFields);
-            resultBuilder.AppendLine(formattedLine);
-          }
+          // 使用ResultFormattingManager格式化提交记录，与导出文件完全相同的格式化逻辑
+          _resultFormattingManager.UpdateFormattedResultTextBox(
+              tempTextBox,
+              commits,
+              selectedFields,
+              includeStats,
+              statsByAuthor,
+              statsByRepo,
+              statsByDate,
+              formatTemplate,
+              showRepeatedRepoNames);
+
+          // 获取格式化内容
+          result = tempTextBox.Text;
         }
         else
         {
-          // 使用默认JSON格式
-          var filteredCommits = commits
-              .Select(commit => FilterCommitFields(commit, selectedFields))
-              .ToList();
+          // 回退到基本的格式化
+          var resultBuilder = new StringBuilder();
 
-          resultBuilder.AppendLine(JsonConvert.SerializeObject(filteredCommits, Formatting.Indented));
+          // 添加统计信息(如果启用)
+          if (includeStats && _statisticsManager != null)
+          {
+            resultBuilder.AppendLine("\n======== 提交统计 ========\n");
+
+            // 直接使用StatisticsManager生成统计信息
+            _statisticsManager.GenerateStats(
+                commits,
+                resultBuilder,
+                statsByAuthor,
+                statsByRepo,
+                statsByDate);
+
+            resultBuilder.AppendLine("\n==========================\n");
+          }
+
+          // 添加提交记录
+          if (!string.IsNullOrEmpty(formatTemplate) && _formattingManager != null)
+          {
+            // 使用FormattingManager的格式化方法
+            string formattedOutput = _formattingManager.FormatCommits(
+                commits,
+                formatTemplate,
+                showRepeatedRepoNames);
+
+            resultBuilder.Append(formattedOutput);
+          }
+          else
+          {
+            // 使用最基本的格式化
+            foreach (var commit in commits)
+            {
+              resultBuilder.AppendLine($"{commit.Repository} : {commit.Message}");
+            }
+          }
+
+          result = resultBuilder.ToString();
         }
 
         // 复制到剪贴板
-        string result = resultBuilder.ToString();
         Clipboard.SetText(result);
 
         // 显示复制成功消息
@@ -78,6 +134,26 @@ namespace GitCommitsWPF.Utils
       {
         _dialogManager.ShowCustomMessageBox("复制错误", $"复制到剪贴板时发生错误：{ex.Message}", false);
       }
+    }
+
+    // 原来的方法保留用于兼容性
+    public void CopyResultToClipboard(
+        List<CommitInfo> commits,
+        string statsOutput,
+        bool includeStats,
+        string formatTemplate,
+        List<string> selectedFields)
+    {
+      // 调用新的实现
+      CopyResultToClipboard(
+          commits,
+          includeStats,
+          includeStats && !string.IsNullOrEmpty(statsOutput) && statsOutput.Contains("按作者统计"),
+          includeStats && !string.IsNullOrEmpty(statsOutput) && statsOutput.Contains("按仓库统计"),
+          includeStats && !string.IsNullOrEmpty(statsOutput) && statsOutput.Contains("按日期统计"),
+          formatTemplate,
+          selectedFields,
+          true);
     }
 
     // 根据提供的格式化字符串格式化提交记录

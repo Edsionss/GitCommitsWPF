@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using Newtonsoft.Json;
 using Button = System.Windows.Controls.Button;
 using GitCommitsWPF.Models;
@@ -51,6 +53,9 @@ namespace GitCommitsWPF
     // FormattingManager实例，用于管理格式化显示功能
     private FormattingManager _formattingManager = new FormattingManager();
 
+    // ResultFormattingManager实例，用于管理结果格式化和显示
+    private ResultFormattingManager _resultFormattingManager;
+
     // DataGridManager实例，用于管理DataGrid相关功能
     private UtilsDataGridManager _dataGridManager;
 
@@ -77,6 +82,9 @@ namespace GitCommitsWPF
 
     // ClipboardManager实例，用于管理剪贴板相关功能
     private ClipboardManager _clipboardManager;
+
+    // CopySelectedRows实例，用于管理选中行复制功能
+    private CopySelectedRows _copySelectedRows;
 
     // 用于防止TextChanged事件循环触发
     private bool _isPathsTextBeingProcessed = false;
@@ -107,7 +115,10 @@ namespace GitCommitsWPF
       _gitOperationsManager = new GitOperationsManager(_outputManager, _dialogManager, _authorManager);
 
       // 初始化剪贴板管理器
-      _clipboardManager = new ClipboardManager(_dialogManager);
+      _clipboardManager = new ClipboardManager(_dialogManager, _resultFormattingManager, _formattingManager, _statisticsManager);
+
+      // 初始化复制选定行管理器
+      _copySelectedRows = new CopySelectedRows(_dialogManager, _resultFormattingManager, _formattingManager);
 
       // 初始化仓库选择管理器
       _repositorySelectionManager = new RepositorySelectionManager(
@@ -146,6 +157,19 @@ namespace GitCommitsWPF
         (title, message, isSuccess, action) => _dialogManager.ShowCustomMessageBox(title, message, isSuccess, action),
         () => FormatTextBox.Text);
 
+      // 初始化统计选项管理器
+      _statisticsOptionsManager.Initialize(
+        EnableStatsCheckBox,
+        StatsByAuthorCheckBox,
+        StatsByRepoCheckBox,
+        StatsByDateCheckBox);
+
+      // 初始化结果格式化管理器
+      _resultFormattingManager = new ResultFormattingManager(_statisticsManager, _formattingManager);
+
+      // 设置ClipboardManager的ResultFormattingManager
+      _clipboardManager.SetResultFormattingManager(_resultFormattingManager);
+
       // 初始化查询执行管理器 - 使用Services命名空间的DataGridManager进行类型转换
       ServicesDataGridManager servicesDataGridManager = new ServicesDataGridManager(_dialogManager);
       servicesDataGridManager.Initialize(CommitsDataGrid,
@@ -158,7 +182,8 @@ namespace GitCommitsWPF
         _dialogManager,
         _statisticsManager,
         _formattingManager,
-        servicesDataGridManager);
+        servicesDataGridManager,
+        _resultFormattingManager);
 
       // 初始化作者对话框管理器
       _authorDialogManager = new AuthorDialogManager(
@@ -179,13 +204,6 @@ namespace GitCommitsWPF
         AuthorFieldCheckBox,
         DateFieldCheckBox,
         MessageFieldCheckBox);
-
-      // 初始化统计选项管理器
-      _statisticsOptionsManager.Initialize(
-        EnableStatsCheckBox,
-        StatsByAuthorCheckBox,
-        StatsByRepoCheckBox,
-        StatsByDateCheckBox);
 
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
@@ -409,15 +427,6 @@ namespace GitCommitsWPF
           return;
         }
 
-        // 获取统计信息
-        var statsBuilder = new StringBuilder();
-        _queryExecutionManager.GenerateStats(
-            statsBuilder,
-            _statisticsOptionsManager.IsStatsByAuthorEnabled(),
-            _statisticsOptionsManager.IsStatsByRepoEnabled(),
-            _statisticsOptionsManager.IsStatsByDateEnabled());
-        string statsOutput = statsBuilder.ToString();
-
         // 获取用户自定义格式模板
         string formatTemplate = FormatTextBox.Text;
 
@@ -427,8 +436,16 @@ namespace GitCommitsWPF
         // 获取选择的字段 - 使用FieldSelectionManager
         List<string> selectedFields = _fieldSelectionManager.GetSelectedFields();
 
-        // 使用ClipboardManager复制结果到剪贴板
-        _clipboardManager.CopyResultToClipboard(_filteredCommits, statsOutput, includeStats, formatTemplate, selectedFields);
+        // 使用ClipboardManager复制结果到剪贴板 - 直接传递所有格式化选项
+        _clipboardManager.CopyResultToClipboard(
+            _filteredCommits,
+            includeStats,
+            _statisticsOptionsManager.IsStatsByAuthorEnabled(),
+            _statisticsOptionsManager.IsStatsByRepoEnabled(),
+            _statisticsOptionsManager.IsStatsByDateEnabled(),
+            formatTemplate,
+            selectedFields,
+            ShowRepeatedRepoNamesCheckBox.IsChecked == true);
       }
       catch (Exception ex)
       {
@@ -479,59 +496,17 @@ namespace GitCommitsWPF
       var formattedResultTextBox = this.FindName("FormattedResultTextBox") as System.Windows.Controls.TextBox;
       if (formattedResultTextBox != null)
       {
-        // 获取选择的字段 - 使用FieldSelectionManager
-        List<string> selectedFields = _fieldSelectionManager.GetSelectedFields();
-
-        // 生成统计数据(如果启用)
-        var statsOutput = new StringBuilder();
-        bool enableStats = _statisticsOptionsManager.IsStatsEnabled();
-
-        if (enableStats)
-        {
-          statsOutput.AppendLine("\n======== 提交统计 ========\n");
-
-          // 使用StatisticsManager生成统计信息
-          _statisticsManager.GenerateStats(
-              _allCommits,
-              statsOutput,
-              _statisticsOptionsManager.IsStatsByAuthorEnabled(),
-              _statisticsOptionsManager.IsStatsByRepoEnabled(),
-              _statisticsOptionsManager.IsStatsByDateEnabled());
-
-          statsOutput.AppendLine("\n==========================\n");
-        }
-
-        string formattedContent = string.Empty;
-
-        // 应用自定义格式
-        string format = FormatTextBox.Text;
-        if (!string.IsNullOrEmpty(format))
-        {
-          // 使用FormattingManager格式化提交记录
-          string formattedOutput = _formattingManager.FormatCommits(
-              _allCommits,
-              format,
-              ShowRepeatedRepoNamesCheckBox.IsChecked == true);
-
-          // 合并统计和格式化输出
-          formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), formattedOutput, enableStats);
-        }
-        else
-        {
-          // 如果没有指定格式，使用JSON格式
-          var filteredCommits = new List<CommitInfo>();
-          foreach (var commit in _allCommits)
-          {
-            // 使用FormattingManager创建过滤后的提交信息
-            filteredCommits.Add(_formattingManager.CreateFilteredCommit(commit, selectedFields));
-          }
-
-          // 使用JSON格式
-          string jsonOutput = JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented);
-          formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), jsonOutput, enableStats);
-        }
-
-        formattedResultTextBox.Text = formattedContent;
+        // 使用ResultFormattingManager更新结果文本框
+        _resultFormattingManager.UpdateFormattedResultTextBox(
+            formattedResultTextBox,
+            _allCommits,
+            _fieldSelectionManager.GetSelectedFields(),
+            _statisticsOptionsManager.IsStatsEnabled(),
+            _statisticsOptionsManager.IsStatsByAuthorEnabled(),
+            _statisticsOptionsManager.IsStatsByRepoEnabled(),
+            _statisticsOptionsManager.IsStatsByDateEnabled(),
+            FormatTextBox.Text,
+            ShowRepeatedRepoNamesCheckBox.IsChecked == true);
       }
     }
 
@@ -571,8 +546,8 @@ namespace GitCommitsWPF
       // 获取格式模板
       string formatTemplate = FormatTextBox.Text;
 
-      // 使用ClipboardManager复制选中的行
-      _clipboardManager.CopySelectedRows(selectedCommits, formatTemplate);
+      // 使用CopySelectedRows复制选中的行
+      _copySelectedRows.CopyRowsToClipboard(selectedCommits, formatTemplate);
     }
 
     private void ExportSelectedToClipboard_Click(object sender, RoutedEventArgs e)

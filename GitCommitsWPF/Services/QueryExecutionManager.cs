@@ -21,6 +21,7 @@ namespace GitCommitsWPF.Services
     private readonly StatisticsManager _statisticsManager;
     private readonly FormattingManager _formattingManager;
     private readonly DataGridManager _dataGridManager;
+    private readonly ResultFormattingManager _resultFormattingManager;
 
     private List<CommitInfo> _allCommits = new List<CommitInfo>();
     private List<CommitInfo> _filteredCommits = new List<CommitInfo>();
@@ -47,7 +48,8 @@ namespace GitCommitsWPF.Services
         DialogManager dialogManager,
         StatisticsManager statisticsManager,
         FormattingManager formattingManager,
-        DataGridManager dataGridManager)
+        DataGridManager dataGridManager,
+        ResultFormattingManager resultFormattingManager)
     {
       _outputManager = outputManager;
       _gitOperationsManager = gitOperationsManager;
@@ -55,6 +57,7 @@ namespace GitCommitsWPF.Services
       _statisticsManager = statisticsManager;
       _formattingManager = formattingManager;
       _dataGridManager = dataGridManager;
+      _resultFormattingManager = resultFormattingManager;
     }
 
     /// <summary>
@@ -206,11 +209,21 @@ namespace GitCommitsWPF.Services
         // 在UI线程上执行
         Application.Current.Dispatcher.Invoke(() =>
         {
-          var formattedResultTextBox = updateFormattedResultTextBox;
+          // 查找FormattedResultTextBox
+          var formattedResultTextBox = Application.Current.Windows.OfType<Window>()
+              .FirstOrDefault(w => w.IsActive)?.FindName("FormattedResultTextBox") as TextBox;
+
           if (formattedResultTextBox != null)
           {
-            // 清空结果页签的内容
+            // 清空文本框
+            formattedResultTextBox.Text = string.Empty;
           }
+          else
+          {
+            // 清空结果页签的内容（回退机制）
+            updateFormattedResultTextBox(new TextBox { Text = string.Empty });
+          }
+
           // 使用DataGridManager更新数据源
           _dataGridManager.UpdateDataSource(null);
           _filteredCommits.Clear(); // 清空筛选结果
@@ -218,11 +231,25 @@ namespace GitCommitsWPF.Services
         return;
       }
 
-      // 获取选择的字段
+      // 获取选择的字段和其他配置项
       List<string> selectedFields = new List<string>();
+      bool enableStats = false;
+      bool statsByAuthor = false;
+      bool statsByRepo = false;
+      bool statsByDate = false;
+      string format = "";
+      bool showRepeatedRepoNames = false;
+
+      // 在UI线程上获取所有配置项
       Application.Current.Dispatcher.Invoke(() =>
       {
         selectedFields = getSelectedFieldsFunc();
+        enableStats = getEnableStats();
+        statsByAuthor = getStatsByAuthor();
+        statsByRepo = getStatsByRepo();
+        statsByDate = getStatsByDate();
+        format = getFormatText();
+        showRepeatedRepoNames = getShowRepeatedRepoNames();
 
         // 使用DataGridManager更新数据源
         _dataGridManager.UpdateDataSource(_allCommits);
@@ -230,13 +257,11 @@ namespace GitCommitsWPF.Services
         clearSearchFilter(); // 清空搜索框
       });
 
+      // 格式化内容并显示在结果页签中
+      string formattedContent = string.Empty;
+
       // 生成统计数据(如果启用)
       var statsOutput = new StringBuilder();
-      bool enableStats = false;
-      Application.Current.Dispatcher.Invoke(() =>
-      {
-        enableStats = getEnableStats();
-      });
 
       if (enableStats)
       {
@@ -246,25 +271,12 @@ namespace GitCommitsWPF.Services
         _statisticsManager.GenerateStats(
             _allCommits,
             statsOutput,
-            getStatsByAuthor(),
-            getStatsByRepo(),
-            getStatsByDate());
+            statsByAuthor,
+            statsByRepo,
+            statsByDate);
 
         statsOutput.AppendLine("\n==========================\n");
       }
-
-      // 应用自定义格式
-      string format = "";
-      bool showRepeatedRepoNames = false;
-
-      Application.Current.Dispatcher.Invoke(() =>
-      {
-        format = getFormatText();
-        showRepeatedRepoNames = getShowRepeatedRepoNames();
-      });
-
-      // 用于保存格式化后的输出内容
-      string formattedContent = string.Empty;
 
       if (!string.IsNullOrEmpty(format))
       {
@@ -276,16 +288,10 @@ namespace GitCommitsWPF.Services
 
         // 合并统计和格式化输出
         formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), formattedOutput, enableStats);
-
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-          // 在"结果"页签中仅显示格式化的结果，不包含日志输出
-          updateFormattedResultTextBox(new TextBox { Text = formattedContent });
-        });
       }
       else
       {
-        // 如果没有指定格式，显示所有字段
+        // 如果没有指定格式，使用JSON格式
         var filteredCommits = new List<CommitInfo>();
         foreach (var commit in _allCommits)
         {
@@ -296,13 +302,35 @@ namespace GitCommitsWPF.Services
         // 使用JSON格式
         string jsonOutput = JsonConvert.SerializeObject(filteredCommits, Formatting.Indented);
         formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), jsonOutput, enableStats);
-
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-          // 在"结果"页签中仅显示格式化的结果，不包含日志输出
-          updateFormattedResultTextBox(new TextBox { Text = formattedContent });
-        });
       }
+
+      // 在UI线程上更新结果页签
+      Application.Current.Dispatcher.Invoke(() =>
+      {
+        // 查找FormattedResultTextBox
+        var formattedResultTextBox = Application.Current.Windows.OfType<Window>()
+            .FirstOrDefault(w => w.IsActive)?.FindName("FormattedResultTextBox") as TextBox;
+
+        if (formattedResultTextBox != null)
+        {
+          // 使用ResultFormattingManager直接格式化和更新文本框
+          _resultFormattingManager.UpdateFormattedResultTextBox(
+              formattedResultTextBox,
+              _allCommits,
+              selectedFields,
+              enableStats,
+              statsByAuthor,
+              statsByRepo,
+              statsByDate,
+              format,
+              showRepeatedRepoNames);
+        }
+        else
+        {
+          // 回退到原来的方式
+          updateFormattedResultTextBox(new TextBox { Text = formattedContent });
+        }
+      });
     }
 
     /// <summary>
