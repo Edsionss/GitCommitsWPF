@@ -37,6 +37,44 @@ namespace GitCommitsWPF.Utils
       _resultFormattingManager = resultFormattingManager;
     }
 
+    /// <summary>
+    /// 将结果复制到剪贴板
+    /// </summary>
+    /// <param name="commits">提交记录列表</param>
+    /// <param name="formatTemplate">格式模板</param>
+    /// <param name="selectedFields">选中的字段</param>
+    /// <param name="statsOutput">统计输出</param>
+    /// <param name="isStats">是否包含统计</param>
+    public void CopyToClipboard(List<CommitInfo> commits, string formatTemplate,
+      List<string> selectedFields, string statsOutput, bool isStats)
+    {
+      if (commits == null || commits.Count == 0)
+      {
+        return;
+      }
+
+      string clipboardContent;
+
+      // 使用格式化管理器进行格式化
+      var sb = new StringBuilder();
+
+      // 如果启用统计，添加统计信息
+      if (isStats)
+      {
+        sb.AppendLine("\n======== 提交统计 ========\n");
+        sb.AppendLine(statsOutput);
+        sb.AppendLine("\n==========================\n");
+      }
+
+      // 使用FormattingManager进行输出格式化
+      string formattedOutput = _formattingManager.FormatCommits(commits, formatTemplate, true);
+      sb.Append(formattedOutput);
+      clipboardContent = sb.ToString();
+
+      // 设置剪贴板内容
+      Clipboard.SetText(clipboardContent);
+    }
+
     // 将结果复制到剪贴板 - 使用完整格式化选项
     public void CopyResultToClipboard(
         List<CommitInfo> commits,

@@ -18,6 +18,9 @@ using Orientation = System.Windows.Controls.Orientation;
 using Button = System.Windows.Controls.Button;
 using ListBox = System.Windows.Controls.ListBox;
 using TextBox = System.Windows.Controls.TextBox;
+using SelectionMode = System.Windows.Controls.SelectionMode;
+using System.Linq; // 用于Cast方法
+using Brushes = System.Windows.Media.Brushes;
 
 namespace GitCommitsWPF.Services
 {
@@ -167,14 +170,26 @@ namespace GitCommitsWPF.Services
       var grid = new Grid();
       grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
       grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-      // 列表框，显示最近的位置
+      // 列表框，显示最近的位置，配置为支持多选
       var listBox = new ListBox
       {
         Margin = new Thickness(10),
-        ItemsSource = _locationManager.RecentLocations
+        ItemsSource = _locationManager.RecentLocations,
+        SelectionMode = SelectionMode.Multiple // 启用多选模式
       };
       Grid.SetRow(listBox, 0);
+
+      // 添加提示文本
+      var tipTextBlock = new TextBlock
+      {
+        Text = "提示: 按住Ctrl键可选择多个路径，或使用全选按钮",
+        Margin = new Thickness(10, 0, 10, 5),
+        Foreground = Brushes.Gray,
+        HorizontalAlignment = HorizontalAlignment.Left
+      };
+      Grid.SetRow(tipTextBlock, 1);
 
       // 按钮面板
       var buttonPanel = new StackPanel
@@ -183,12 +198,12 @@ namespace GitCommitsWPF.Services
         HorizontalAlignment = HorizontalAlignment.Center,
         Margin = new Thickness(0, 0, 0, 10)
       };
-      Grid.SetRow(buttonPanel, 1);
+      Grid.SetRow(buttonPanel, 2);
 
       // 添加按钮
       var addButton = new Button
       {
-        Content = "添加",
+        Content = "添加选中项",
         Padding = new Thickness(15, 5, 15, 5),
         Margin = new Thickness(5),
         MinWidth = 80
@@ -196,21 +211,46 @@ namespace GitCommitsWPF.Services
 
       addButton.Click += (s, evt) =>
       {
-        if (listBox.SelectedItem is string selectedPath)
+        if (listBox.SelectedItems.Count > 0)
         {
-          // 确保路径被添加到最近位置并保存
-          _locationManager.AddToRecentLocations(selectedPath);
+          int addedCount = 0;
+
+          foreach (var selectedPath in listBox.SelectedItems.Cast<string>())
+          {
+            // 确保路径被添加到最近位置并保存
+            _locationManager.AddToRecentLocations(selectedPath);
+
+            // 通过回调通知添加路径
+            pathAddedCallback?.Invoke(selectedPath);
+            addedCount++;
+          }
+
+          // 保存最近位置（只需要保存一次）
           _locationManager.SaveRecentLocations();
 
-          // 通过回调通知添加路径
-          pathAddedCallback?.Invoke(selectedPath);
+          // 显示成功消息
+          _dialogManager.ShowCustomMessageBox("添加完成", $"已成功添加 {addedCount} 个路径", true);
 
           selectWindow.Close();
         }
         else
         {
-          _dialogManager.ShowCustomMessageBox("提示", "请先选择一个位置", false);
+          _dialogManager.ShowCustomMessageBox("提示", "请先选择至少一个位置", false);
         }
+      };
+
+      // 添加全选按钮
+      var selectAllButton = new Button
+      {
+        Content = "全选",
+        Padding = new Thickness(15, 5, 15, 5),
+        Margin = new Thickness(5),
+        MinWidth = 80
+      };
+
+      selectAllButton.Click += (s, evt) =>
+      {
+        listBox.SelectAll();
       };
 
       // 清除按钮
@@ -244,9 +284,11 @@ namespace GitCommitsWPF.Services
       };
 
       buttonPanel.Children.Add(addButton);
+      buttonPanel.Children.Add(selectAllButton);
       buttonPanel.Children.Add(clearButton);
       buttonPanel.Children.Add(cancelButton);
       grid.Children.Add(listBox);
+      grid.Children.Add(tipTextBlock);
       grid.Children.Add(buttonPanel);
 
       selectWindow.Content = grid;

@@ -101,7 +101,7 @@ namespace GitCommitsWPF
       _logOperationsManager = new LogOperationsManager(_dialogManager, _outputManager);
 
       // 初始化导出管理器
-      _exportManager = new ExportManager(_dialogManager);
+      _exportManager = new ExportManager(_dialogManager, _formattingManager);
 
       // 初始化Git操作管理器
       _gitOperationsManager = new GitOperationsManager(_outputManager, _dialogManager, _authorManager);
@@ -203,6 +203,9 @@ namespace GitCommitsWPF
         }
       };
 
+      // 添加作者文本框清空监听，确保当用户手动删除作者时能正确处理
+      AuthorTextBox.TextChanged += AuthorTextBox_TextChanged;
+
       // 监听路径文本框变化，检查并移除重复路径
       PathsTextBox.TextChanged += (s, e) =>
       {
@@ -238,6 +241,17 @@ namespace GitCommitsWPF
 
       // 添加关闭事件处理器，确保应用程序退出时保存设置
       this.Closing += MainWindow_Closing;
+    }
+
+    // 作者文本框内容变更事件处理
+    private void AuthorTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+      // 如果作者文本框被清空，确保不会使用上一次的作者进行筛选
+      if (string.IsNullOrWhiteSpace(AuthorTextBox.Text))
+      {
+        // 输出日志，帮助调试
+        _outputManager.UpdateOutput("作者筛选条件已清空");
+      }
     }
 
     // 窗口加载完成后的处理
@@ -288,9 +302,17 @@ namespace GitCommitsWPF
       string timeRange = _timeRangeManager.GetSelectedTimeRange();
       DateTime? startDate = _timeRangeManager.GetStartDate();
       DateTime? endDate = _timeRangeManager.GetEndDate();
-      string author = AuthorTextBox.Text;
+      string author = string.IsNullOrWhiteSpace(AuthorTextBox.Text) ? string.Empty : AuthorTextBox.Text.Trim();
       string authorFilter = AuthorFilterTextBox.Text;
       bool verifyGitPaths = VerifyGitPathsCheckBox.IsChecked == true;
+
+      // 记录当前筛选条件，帮助调试
+      _outputManager.AddSeparator();
+      _outputManager.UpdateOutput($"查询条件 - 作者: {(string.IsNullOrEmpty(author) ? "未指定" : author)}");
+      if (!string.IsNullOrEmpty(authorFilter))
+      {
+        _outputManager.UpdateOutput($"查询条件 - 作者关键词: {authorFilter}");
+      }
 
       // 使用QueryExecutionManager执行查询
       await _queryExecutionManager.ExecuteQuery(
@@ -649,6 +671,9 @@ namespace GitCommitsWPF
 
       try
       {
+        // 在开始新的作者扫描前，先清空作者文本框，确保上一次的作者筛选条件不会保留
+        AuthorTextBox.Text = string.Empty;
+
         // 使用RepositorySelectionManager获取路径列表
         List<string> paths = _repositorySelectionManager.GetPathsList();
 
@@ -753,6 +778,9 @@ namespace GitCommitsWPF
     // 最近使用
     private void LastAuthor_Click(object sender, RoutedEventArgs e)
     {
+      // 在显示最近作者选择对话框之前，先清空作者文本框，确保上一次的作者筛选条件不会保留
+      AuthorTextBox.Text = string.Empty;
+
       // 使用AuthorDialogManager显示最近作者选择对话框
       string selectedAuthor = _authorDialogManager.ShowRecentAuthorSelectionDialog(_allCommits);
 

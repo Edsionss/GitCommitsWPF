@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Xml;
 using System.Windows;
@@ -18,14 +19,17 @@ namespace GitCommitsWPF.Utils
   public class ExportManager
   {
     private readonly DialogManager _dialogManager;
+    private readonly FormattingManager _formattingManager;
 
     /// <summary>
     /// 初始化导出管理器
     /// </summary>
     /// <param name="dialogManager">对话框管理器</param>
-    public ExportManager(DialogManager dialogManager)
+    /// <param name="formattingManager">格式化管理器</param>
+    public ExportManager(DialogManager dialogManager, FormattingManager formattingManager)
     {
       _dialogManager = dialogManager ?? throw new ArgumentNullException(nameof(dialogManager));
+      _formattingManager = formattingManager ?? throw new ArgumentNullException(nameof(formattingManager));
     }
 
     /// <summary>
@@ -143,132 +147,78 @@ namespace GitCommitsWPF.Utils
         string extension = Path.GetExtension(outputPath).ToLower();
         string formattedContent;
 
-        // 如果有格式模板，使用模板格式化输出
-        if (!string.IsNullOrEmpty(formatTemplate))
+        // 如果有格式模板，按自定义格式输出
+        var sb = new StringBuilder();
+
+        // 如果启用统计，添加统计数据
+        if (isStats)
         {
-          var sb = new StringBuilder();
-          var displayedRepos = new Dictionary<string, bool>();
+          sb.AppendLine("\n======== 提交统计 ========\n");
+          sb.AppendLine(statsOutput);
+          sb.AppendLine("\n==========================\n");
+        }
 
-          // 如果启用了统计，先添加统计信息
-          if (isStats)
+        // 直接使用FormattingManager进行格式化
+        if (_formattingManager != null)
+        {
+          string formattedOutput = _formattingManager.FormatCommits(commits, formatTemplate, true);
+          sb.Append(formattedOutput);
+          formattedContent = sb.ToString();
+        }
+        else
+        {
+          // 回退方案：按仓库分组处理，确保仓库名称正确显示
+          var commitsByRepo = commits
+              .GroupBy(c => c.RepoPath)
+              .ToList();
+
+          // 遍历每个仓库组
+          foreach (var repoGroup in commitsByRepo)
           {
-            sb.AppendLine("\n======== 提交统计 ========\n");
-            sb.AppendLine(statsOutput);
-            sb.AppendLine("\n==========================\n");
-          }
+            var repoCommits = repoGroup.ToList();
+            bool isFirstCommitInRepo = true;
 
-          foreach (var commit in commits)
-          {
-            string line = formatTemplate;
-
-            // 获取当前提交的仓库标识符
-            string repoKey = !string.IsNullOrEmpty(commit.RepoFolder) ? commit.RepoFolder : commit.Repository;
-
-            // 替换所有占位符，处理重复仓库名的显示逻辑
-            line = line.Replace("{Repository}", displayedRepos.ContainsKey(repoKey) ? new string(' ', repoKey.Length) : commit.Repository);
-
-            line = line.Replace("{RepoPath}", commit.RepoPath);
-
-            line = line.Replace("{RepoFolder}", displayedRepos.ContainsKey(repoKey) ? new string(' ', repoKey.Length) : commit.RepoFolder);
-
-            line = line.Replace("{CommitId}", commit.CommitId ?? "");
-            line = line.Replace("{Author}", commit.Author ?? "");
-            line = line.Replace("{Date}", commit.Date ?? "");
-            line = line.Replace("{Message}", commit.Message ?? "");
-
-            sb.AppendLine(line);
-
-            // 标记此仓库已显示
-            if (!displayedRepos.ContainsKey(repoKey))
+            // 处理该仓库的所有提交
+            foreach (var commit in repoCommits)
             {
-              displayedRepos[repoKey] = true;
+              string line = formatTemplate;
+
+              // 确保仓库信息正确设置
+              if (string.IsNullOrEmpty(commit.Repository) && !string.IsNullOrEmpty(commit.RepoPath))
+              {
+                commit.Repository = Path.GetFileName(commit.RepoPath);
+              }
+
+              if (string.IsNullOrEmpty(commit.RepoFolder) && !string.IsNullOrEmpty(commit.RepoPath))
+              {
+                commit.RepoFolder = Path.GetFileName(commit.RepoPath);
+              }
+
+              // 替换所有占位符
+              line = line.Replace("{Repository}", commit.Repository);
+              line = line.Replace("{RepoPath}", commit.RepoPath);
+              line = line.Replace("{RepoFolder}", commit.RepoFolder);
+              line = line.Replace("{CommitId}", commit.CommitId ?? "");
+              line = line.Replace("{Author}", commit.Author ?? "");
+              line = line.Replace("{Date}", commit.Date ?? "");
+              line = line.Replace("{Message}", commit.Message ?? "");
+
+              sb.AppendLine(line);
+              isFirstCommitInRepo = false;
             }
           }
 
           formattedContent = sb.ToString();
+        }
 
-          // 根据文件扩展名保存
-          if (extension == ".html")
-          {
-            SaveFormattedContentAsHtml(outputPath, formattedContent);
-          }
-          else
-          {
-            File.WriteAllText(outputPath, formattedContent, Encoding.UTF8);
-          }
+        // 根据文件扩展名保存
+        if (extension == ".html")
+        {
+          SaveFormattedContentAsHtml(outputPath, formattedContent);
         }
         else
         {
-          // 如果没有格式模板，使用JSON格式
-          var filteredCommits = new List<Dictionary<string, string>>();
-
-          // 创建筛选后的对象列表
-          foreach (var commit in commits)
-          {
-            var filteredCommit = new Dictionary<string, string>();
-
-            if (selectedFields.Contains("Repository")) filteredCommit["Repository"] = commit.Repository;
-            if (selectedFields.Contains("RepoPath")) filteredCommit["RepoPath"] = commit.RepoPath;
-            if (selectedFields.Contains("RepoFolder")) filteredCommit["RepoFolder"] = commit.RepoFolder;
-            if (selectedFields.Contains("CommitId")) filteredCommit["CommitId"] = commit.CommitId;
-            if (selectedFields.Contains("Author")) filteredCommit["Author"] = commit.Author;
-            if (selectedFields.Contains("Date")) filteredCommit["Date"] = commit.Date;
-            if (selectedFields.Contains("Message")) filteredCommit["Message"] = commit.Message;
-
-            filteredCommits.Add(filteredCommit);
-          }
-
-          var sb = new StringBuilder();
-
-          // 添加统计信息（如果启用）
-          if (isStats)
-          {
-            sb.AppendLine("\n======== 提交统计 ========\n");
-            sb.AppendLine(statsOutput);
-            sb.AppendLine("\n==========================\n");
-          }
-
-          // 序列化对象为JSON
-          string json = JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented);
-          sb.AppendLine(json);
-
-          formattedContent = sb.ToString();
-
-          // 根据文件扩展名保存
-          switch (extension)
-          {
-            case ".html":
-              SaveFormattedContentAsHtml(outputPath, formattedContent);
-              break;
-            case ".xml":
-              if (formattedContent.Contains("======== 提交统计 ========"))
-              {
-                // 如果包含统计信息，直接保存为文本格式
-                File.WriteAllText(outputPath, formattedContent, Encoding.UTF8);
-              }
-              else
-              {
-                // 否则转换为XML格式
-                SaveAsXml(outputPath, JsonConvert.DeserializeObject<List<Dictionary<string, string>>>(json));
-              }
-              break;
-            case ".csv":
-              if (formattedContent.Contains("======== 提交统计 ========"))
-              {
-                // 如果包含统计信息，直接保存为文本格式
-                File.WriteAllText(outputPath, formattedContent, Encoding.UTF8);
-              }
-              else
-              {
-                // 否则转换为CSV格式
-                SaveAsCsv(outputPath, JsonConvert.DeserializeObject<List<Dictionary<string, string>>>(json));
-              }
-              break;
-            default:
-              // 保存为文本格式
-              File.WriteAllText(outputPath, formattedContent, Encoding.UTF8);
-              break;
-          }
+          File.WriteAllText(outputPath, formattedContent, Encoding.UTF8);
         }
 
         _dialogManager.ShowCustomMessageBox("保存成功", $"结果已保存到: {outputPath}", true, outputPath);

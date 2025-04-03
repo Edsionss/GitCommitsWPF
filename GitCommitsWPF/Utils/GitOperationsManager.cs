@@ -249,6 +249,7 @@ namespace GitCommitsWPF.Utils
     /// <returns>作者列表</returns>
     public async Task<List<string>> ScanGitAuthorsAsync(List<string> paths)
     {
+      // 创建新的作者列表，确保不会与先前的扫描结果混合
       List<string> authors = new List<string>();
 
       // 显示进度条
@@ -616,6 +617,11 @@ namespace GitCommitsWPF.Utils
           // 并行预筛选
           ConcurrentBag<DirectoryInfo> filteredReposBag = new ConcurrentBag<DirectoryInfo>();
 
+          // 检查是否可以进行批量跳过大型仓库操作
+          bool canSkipLargeRepos = !string.IsNullOrEmpty(since) &&
+                                  (DateTime.TryParse(since, out DateTime sinceDate) &&
+                                   (DateTime.Now - sinceDate).TotalDays <= 30); // 只针对近期时间范围执行优化
+
           await Task.Run(() =>
           {
             Parallel.ForEach(gitRepos, new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism }, repo =>
@@ -624,8 +630,19 @@ namespace GitCommitsWPF.Utils
 
               try
               {
+                // 检查仓库大小，对大型仓库执行轻量级检查
+                bool isLargeRepo = false;
+                if (canSkipLargeRepos)
+                {
+                  isLargeRepo = IsLargeRepository(repo);
+                  if (isLargeRepo)
+                  {
+                    _outputManager.OutputInfo($"检测到大型仓库: {repo.FullName}，将使用轻量级扫描");
+                  }
+                }
+
                 // 预检查仓库是否包含符合条件的提交
-                if (PreCheckRepository(repo, since, until, author))
+                if (TwoStageCheckRepository(repo, since, until, author))
                 {
                   filteredReposBag.Add(repo);
                   _outputManager.OutputSuccess($"仓库符合筛选条件: {repo.FullName}");
@@ -676,6 +693,24 @@ namespace GitCommitsWPF.Utils
         // 用于并行处理的计数器
         var completedCounter = new CounterProgress(_repoCount, progress);
 
+        // 维护一个仓库处理状态字典，用于统计性能数据
+        ConcurrentDictionary<string, (int CommitCount, TimeSpan ProcessTime, bool IsLarge)> repoProcessStats =
+            new ConcurrentDictionary<string, (int, TimeSpan, bool)>();
+
+        // 创建仓库结果字典，为每个仓库创建独立的结果集实例
+        ConcurrentDictionary<string, List<CommitInfo>> repoCommitsDict =
+            new ConcurrentDictionary<string, List<CommitInfo>>();
+
+        // 检查是否可以使用轻量级模式
+        bool useLightweightMode = !string.IsNullOrEmpty(since) &&
+                              (DateTime.TryParse(since, out DateTime scanSinceDate) &&
+                               (DateTime.Now - scanSinceDate).TotalDays <= 30);
+
+        if (useLightweightMode)
+        {
+          await _outputManager.OutputInfoAsync("检测到近期时间范围查询，将采用轻量级扫描模式");
+        }
+
         await Task.Run(() =>
         {
           Parallel.ForEach(gitRepos, new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism }, repo =>
@@ -687,13 +722,40 @@ namespace GitCommitsWPF.Utils
               // 报告当前处理的仓库
               completedCounter.ReportProgress(repo.FullName);
 
-              // 处理单个仓库
-              var repoCommits = ProcessSingleRepositoryParallel(repo, since, until, author, authorFilter, gitFields, gitFormat);
+              // 记录仓库处理开始时间
+              DateTime repoStartTime = DateTime.Now;
 
-              // 添加此仓库的提交
+              // 判断是否为大型仓库
+              bool isLargeRepo = false;
+              if (useLightweightMode)
+              {
+                isLargeRepo = IsLargeRepository(repo);
+              }
+
+              // 处理单个仓库，为每个仓库创建独立的结果集
+              var repoCommits = ProcessSingleRepositoryParallel(repo, since, until, author, authorFilter, gitFields, gitFormat, isLargeRepo);
+
+              // 保存仓库的提交到字典中，确保每个仓库有独立的结果集
               if (repoCommits.Count > 0)
               {
-                _outputManager.OutputSuccess($"  - 从仓库 '{repo.Name}' 中找到 {repoCommits.Count} 个提交");
+                // 使用仓库的全路径作为键，确保唯一性
+                repoCommitsDict.TryAdd(repo.FullName, repoCommits);
+              }
+
+              // 记录仓库处理完成时间和统计信息
+              TimeSpan repoProcessTime = DateTime.Now - repoStartTime;
+              repoProcessStats.TryAdd(repo.FullName, (repoCommits.Count, repoProcessTime, isLargeRepo));
+
+              // 添加此仓库的提交到总集合
+              if (repoCommits.Count > 0)
+              {
+                string infoMessage = isLargeRepo
+                    ? $"  - 从大型仓库 '{repo.Name}' 中找到 {repoCommits.Count} 个提交 (用时: {FormatTimeSpan(repoProcessTime)})"
+                    : $"  - 从仓库 '{repo.Name}' 中找到 {repoCommits.Count} 个提交 (用时: {FormatTimeSpan(repoProcessTime)})";
+
+                _outputManager.OutputSuccess(infoMessage);
+
+                // 将仓库的提交添加到总结果集
                 foreach (var commit in repoCommits)
                 {
                   commitsBag.Add(commit);
@@ -701,7 +763,7 @@ namespace GitCommitsWPF.Utils
               }
               else
               {
-                _outputManager.OutputInfo($"  - 仓库 '{repo.Name}' 中未找到符合条件的提交");
+                _outputManager.OutputInfo($"  - 仓库 '{repo.Name}' 中未找到符合条件的提交 (用时: {FormatTimeSpan(repoProcessTime)})");
               }
 
               // 获取仓库创建日期
@@ -746,6 +808,26 @@ namespace GitCommitsWPF.Utils
 
         // 替换进度条完成消息
         await _outputManager.OutputSuccessAsync("所有仓库处理完成 (100%)");
+
+        // 输出性能统计信息
+        if (repoProcessStats.Count > 0)
+        {
+          // 找出处理最慢的仓库
+          var slowestRepo = repoProcessStats.OrderByDescending(kv => kv.Value.ProcessTime).First();
+          // 找出提交量最大的仓库
+          var largestRepo = repoProcessStats.OrderByDescending(kv => kv.Value.CommitCount).First();
+
+          await _outputManager.OutputHighlightAsync("==== 性能详情 ====");
+          await _outputManager.OutputInfoAsync($"处理最慢的仓库: {Path.GetFileName(slowestRepo.Key)} (用时: {FormatTimeSpan(slowestRepo.Value.ProcessTime)})");
+          await _outputManager.OutputInfoAsync($"提交量最大的仓库: {Path.GetFileName(largestRepo.Key)} (提交数: {largestRepo.Value.CommitCount})");
+
+          // 大型仓库统计
+          int largeRepoCount = repoProcessStats.Count(kv => kv.Value.IsLarge);
+          if (largeRepoCount > 0)
+          {
+            await _outputManager.OutputInfoAsync($"大型仓库数量: {largeRepoCount} (使用了轻量级扫描模式)");
+          }
+        }
 
         // 计算总扫描用时
         TimeSpan totalScanTime = DateTime.Now - scanStartTime;
@@ -846,6 +928,7 @@ namespace GitCommitsWPF.Utils
     // 新增方法：异步处理单个Git仓库
     private async Task<List<CommitInfo>> ProcessSingleRepositoryAsync(DirectoryInfo repo, string since, string until, string author, string authorFilter, List<string> gitFields, string gitFormat)
     {
+      // 为每个仓库创建独立的结果集实例
       List<CommitInfo> repoCommits = new List<CommitInfo>();
 
       // 使用Task.Run在后台线程执行这个操作，避免阻塞UI线程
@@ -868,7 +951,8 @@ namespace GitCommitsWPF.Utils
           arguments += $" --pretty=format:\"{gitFormat}\"";
           arguments += " --date=format:\"%Y-%m-%d %H:%M:%S\"";
 
-          if (!string.IsNullOrEmpty(author))
+          // 仅当author不为空或空白字符时才添加到git命令中
+          if (!string.IsNullOrWhiteSpace(author))
           {
             arguments += $" --author=\"{author}\"";
           }
@@ -897,6 +981,9 @@ namespace GitCommitsWPF.Utils
           {
             var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
+            // 创建仓库特定的结果集
+            List<CommitInfo> repoSpecificCommits = new List<CommitInfo>();
+
             foreach (var line in lines)
             {
               // 检查是否已手动停止
@@ -915,7 +1002,7 @@ namespace GitCommitsWPF.Utils
                 var parts = line.Split('|');
                 if (parts.Length >= gitFields.Count)
                 {
-                  // 创建一个提交信息对象
+                  // 创建一个提交信息对象，确保包含完整的仓库信息
                   var commitObj = new CommitInfo
                   {
                     Repository = repo.Name,
@@ -954,22 +1041,36 @@ namespace GitCommitsWPF.Utils
                   if (!string.IsNullOrEmpty(authorFilter) && commitObj.Author != null)
                   {
                     shouldInclude = false;
-                    var authors = authorFilter.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                    foreach (var authorPattern in authors)
+                    var authorPatterns = authorFilter.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(p => p.Trim().ToLower())
+                        .Where(p => !string.IsNullOrEmpty(p))
+                        .ToArray();
+
+                    // 如果没有有效的过滤模式，默认包含所有
+                    if (authorPatterns.Length == 0)
                     {
-                      string trimmedPattern = authorPattern.Trim();
-                      if (!string.IsNullOrEmpty(trimmedPattern) &&
-                                  commitObj.Author.IndexOf(trimmedPattern, StringComparison.OrdinalIgnoreCase) >= 0)
+                      shouldInclude = true;
+                    }
+                    else
+                    {
+                      // 优化字符串比较 - 大小写不敏感
+                      string authorLower = commitObj.Author.ToLower();
+
+                      // 检查每个过滤模式
+                      foreach (var pattern in authorPatterns)
                       {
-                        shouldInclude = true;
-                        break;
+                        if (authorLower.Contains(pattern))
+                        {
+                          shouldInclude = true;
+                          break;
+                        }
                       }
                     }
                   }
 
                   if (shouldInclude)
                   {
-                    repoCommits.Add(commitObj);
+                    repoSpecificCommits.Add(commitObj);
                   }
                 }
               }
@@ -978,6 +1079,9 @@ namespace GitCommitsWPF.Utils
                 await _outputManager.UpdateOutputAsync($"处理提交记录时出错: {ex.Message}");
               }
             }
+
+            // 将这个仓库特定的结果添加到总结果中
+            repoCommits.AddRange(repoSpecificCommits);
           }
 
           // 恢复当前目录
@@ -1098,8 +1202,9 @@ namespace GitCommitsWPF.Utils
     }
 
     // 新增方法：并行处理单个仓库
-    private List<CommitInfo> ProcessSingleRepositoryParallel(DirectoryInfo repo, string since, string until, string author, string authorFilter, List<string> gitFields, string gitFormat)
+    private List<CommitInfo> ProcessSingleRepositoryParallel(DirectoryInfo repo, string since, string until, string author, string authorFilter, List<string> gitFields, string gitFormat, bool isLargeRepo = false)
     {
+      // 为每个仓库创建独立的结果集实例
       List<CommitInfo> repoCommits = new List<CommitInfo>();
 
       try
@@ -1125,16 +1230,35 @@ namespace GitCommitsWPF.Utils
           // 性能优化 - 添加命令选项，避免遍历所有对象
           arguments += " --no-walk=sorted";
 
-          // 批量处理，提高性能，单次获取1000个
-          arguments += " -n1000";
+          // 批量处理，提高性能，默认单次获取1000个
+          // 对于大型仓库，使用--max-count限制结果数量
+          if (isLargeRepo)
+          {
+            arguments += " -n500"; // 对大型仓库限制为前500个提交
+            _outputManager.OutputInfo($"对大型仓库 {repo.Name} 限制为最近500个提交");
+          }
+          else
+          {
+            arguments += " -n1000"; // 标准仓库批量获取1000个
+          }
 
-          if (!string.IsNullOrEmpty(author))
+          // 仅当author不为空或空白字符时才添加到git命令中
+          if (!string.IsNullOrWhiteSpace(author))
           {
             arguments += $" --author=\"{author}\"";
           }
 
           // 使用多线程和优化的命令选项
-          arguments += " --all"; // 包含所有引用
+          if (isLargeRepo)
+          {
+            // 对大型仓库直接使用HEAD，避免扫描所有分支
+            arguments += " HEAD";
+          }
+          else
+          {
+            // 对普通仓库包含所有引用
+            arguments += " --all";
+          }
 
           // 执行Git命令
           var process = new Process
@@ -1169,8 +1293,8 @@ namespace GitCommitsWPF.Utils
 
           process.WaitForExit();
 
-          // 批量处理提交记录，利用并行处理
-          ConcurrentBag<CommitInfo> commitsBag = new ConcurrentBag<CommitInfo>();
+          // 创建仓库特定的并发集合，确保结果互不干扰
+          ConcurrentBag<CommitInfo> repoSpecificCommitsBag = new ConcurrentBag<CommitInfo>();
 
           Parallel.ForEach(lines, line =>
           {
@@ -1183,7 +1307,7 @@ namespace GitCommitsWPF.Utils
               var parts = line.Split('|');
               if (parts.Length >= gitFields.Count)
               {
-                // 创建一个提交信息对象
+                // 创建一个提交信息对象，确保包含完整的仓库信息
                 var commitObj = new CommitInfo
                 {
                   Repository = repo.Name,
@@ -1222,26 +1346,36 @@ namespace GitCommitsWPF.Utils
                 if (!string.IsNullOrEmpty(authorFilter) && commitObj.Author != null)
                 {
                   shouldInclude = false;
-                  var authors = authorFilter.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                  var authorPatterns = authorFilter.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                      .Select(p => p.Trim().ToLower())
+                      .Where(p => !string.IsNullOrEmpty(p))
+                      .ToArray();
 
-                  // 优化字符串比较
-                  string authorLower = commitObj.Author.ToLower();
-
-                  foreach (var authorPattern in authors)
+                  // 如果没有有效的过滤模式，默认包含所有
+                  if (authorPatterns.Length == 0)
                   {
-                    string trimmedPattern = authorPattern.Trim().ToLower();
-                    if (!string.IsNullOrEmpty(trimmedPattern) &&
-                               authorLower.Contains(trimmedPattern))
+                    shouldInclude = true;
+                  }
+                  else
+                  {
+                    // 优化字符串比较 - 大小写不敏感
+                    string authorLower = commitObj.Author.ToLower();
+
+                    // 检查每个过滤模式
+                    foreach (var pattern in authorPatterns)
                     {
-                      shouldInclude = true;
-                      break;
+                      if (authorLower.Contains(pattern))
+                      {
+                        shouldInclude = true;
+                        break;
+                      }
                     }
                   }
                 }
 
                 if (shouldInclude)
                 {
-                  commitsBag.Add(commitObj);
+                  repoSpecificCommitsBag.Add(commitObj);
                 }
               }
             }
@@ -1251,8 +1385,8 @@ namespace GitCommitsWPF.Utils
             }
           });
 
-          // 转换为列表
-          repoCommits = commitsBag.ToList();
+          // 转换为列表，确保是该仓库特定的结果集
+          repoCommits = repoSpecificCommitsBag.ToList();
         }
         finally
         {
@@ -1260,9 +1394,12 @@ namespace GitCommitsWPF.Utils
           Directory.SetCurrentDirectory(currentDirectory);
         }
       }
-      catch (Exception)
+      catch (Exception ex)
       {
-        // 处理仓库级别的错误
+        // 处理仓库级别的错误，记录错误信息
+        _outputManager.OutputError($"处理仓库 '{repo.FullName}' 时发生错误: {ex.Message}");
+        // 返回空列表，确保不会因为一个仓库的错误影响其他仓库
+        repoCommits = new List<CommitInfo>();
       }
 
       return repoCommits;
@@ -1311,39 +1448,130 @@ namespace GitCommitsWPF.Utils
       return repoCreateDate;
     }
 
-    // 新增方法：预检查仓库是否包含符合条件的提交
-    private bool PreCheckRepository(DirectoryInfo repo, string since, string until, string author)
+    // 新增方法：两阶段筛选策略 - 时间优先，作者次之
+    private bool TwoStageCheckRepository(DirectoryInfo repo, string since, string until, string author)
     {
       try
       {
         string currentDirectory = Directory.GetCurrentDirectory();
         Directory.SetCurrentDirectory(repo.FullName);
 
-        // 构建快速检查的Git命令
-        var arguments = "log -n1";  // 只检查是否有至少一个提交符合条件
-
-        if (!string.IsNullOrEmpty(since))
+        // 第一阶段：仅基于时间范围进行快速筛选
+        if (!string.IsNullOrEmpty(since) || !string.IsNullOrEmpty(until))
         {
-          arguments += $" --since=\"{since}\"";
+          var timeCheckArguments = "log -n1";  // 只检查是否有至少一个提交符合条件
+
+          if (!string.IsNullOrEmpty(since))
+          {
+            timeCheckArguments += $" --since=\"{since}\"";
+          }
+
+          if (!string.IsNullOrEmpty(until))
+          {
+            timeCheckArguments += $" --until=\"{until}\"";
+          }
+
+          // 执行时间范围筛选
+          var timeCheckProcess = new Process
+          {
+            StartInfo = new ProcessStartInfo
+            {
+              FileName = "git",
+              Arguments = timeCheckArguments,
+              UseShellExecute = false,
+              RedirectStandardOutput = true,
+              CreateNoWindow = true,
+              StandardOutputEncoding = Encoding.UTF8
+            }
+          };
+
+          timeCheckProcess.Start();
+          string timeCheckOutput = timeCheckProcess.StandardOutput.ReadToEnd();
+          timeCheckProcess.WaitForExit();
+
+          // 如果时间范围筛选未通过，直接返回false
+          if (string.IsNullOrWhiteSpace(timeCheckOutput))
+          {
+            Directory.SetCurrentDirectory(currentDirectory);
+            return false;
+          }
         }
 
-        if (!string.IsNullOrEmpty(until))
+        // 第二阶段：基于作者进行筛选（只有通过时间筛选的仓库才会到这里）
+        if (!string.IsNullOrWhiteSpace(author))
         {
-          arguments += $" --until=\"{until}\"";
+          var authorCheckArguments = "log -n1";
+
+          // 添加时间参数以确保结果一致性
+          if (!string.IsNullOrEmpty(since))
+          {
+            authorCheckArguments += $" --since=\"{since}\"";
+          }
+
+          if (!string.IsNullOrEmpty(until))
+          {
+            authorCheckArguments += $" --until=\"{until}\"";
+          }
+
+          // 添加作者参数
+          authorCheckArguments += $" --author=\"{author}\"";
+
+          // 执行作者筛选
+          var authorCheckProcess = new Process
+          {
+            StartInfo = new ProcessStartInfo
+            {
+              FileName = "git",
+              Arguments = authorCheckArguments,
+              UseShellExecute = false,
+              RedirectStandardOutput = true,
+              CreateNoWindow = true,
+              StandardOutputEncoding = Encoding.UTF8
+            }
+          };
+
+          authorCheckProcess.Start();
+          string authorCheckOutput = authorCheckProcess.StandardOutput.ReadToEnd();
+          authorCheckProcess.WaitForExit();
+
+          // 恢复当前目录
+          Directory.SetCurrentDirectory(currentDirectory);
+
+          // 返回作者筛选结果
+          return !string.IsNullOrWhiteSpace(authorCheckOutput);
         }
 
-        if (!string.IsNullOrEmpty(author))
-        {
-          arguments += $" --author=\"{author}\"";
-        }
+        // 恢复当前目录
+        Directory.SetCurrentDirectory(currentDirectory);
 
-        // 执行Git命令进行快速检查
-        var process = new Process
+        // 如果没有作者筛选，则已经通过了时间筛选
+        return true;
+      }
+      catch (Exception ex)
+      {
+        _outputManager.OutputWarning($"预检查仓库时出错: {ex.Message}");
+        // 如果出错，保守地返回true以便仓库能被包含在完整扫描中
+        return true;
+      }
+    }
+
+    /// <summary>
+    /// 检查是否为大型仓库
+    /// </summary>
+    private bool IsLargeRepository(DirectoryInfo repo)
+    {
+      try
+      {
+        string currentDirectory = Directory.GetCurrentDirectory();
+        Directory.SetCurrentDirectory(repo.FullName);
+
+        // 检查提交数量
+        var commitCountProcess = new Process
         {
           StartInfo = new ProcessStartInfo
           {
             FileName = "git",
-            Arguments = arguments,
+            Arguments = "rev-list --count --all",
             UseShellExecute = false,
             RedirectStandardOutput = true,
             CreateNoWindow = true,
@@ -1351,21 +1579,24 @@ namespace GitCommitsWPF.Utils
           }
         };
 
-        process.Start();
-        string output = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
+        commitCountProcess.Start();
+        string countOutput = commitCountProcess.StandardOutput.ReadToEnd().Trim();
+        commitCountProcess.WaitForExit();
 
         // 恢复当前目录
         Directory.SetCurrentDirectory(currentDirectory);
 
-        // 如果有输出，说明存在符合条件的提交
-        return !string.IsNullOrWhiteSpace(output);
+        // 如果提交数量大于5000，视为大型仓库
+        if (int.TryParse(countOutput, out int commitCount))
+        {
+          return commitCount > 5000;
+        }
+
+        return false;
       }
-      catch (Exception ex)
+      catch
       {
-        _outputManager.UpdateOutput($"预检查仓库时出错: {ex.Message}");
-        // 如果出错，保守地返回true以便仓库能被包含在完整扫描中
-        return true;
+        return false;
       }
     }
   }

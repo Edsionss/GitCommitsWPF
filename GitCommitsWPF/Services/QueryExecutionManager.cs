@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -86,19 +87,14 @@ namespace GitCommitsWPF.Services
         Action setSaveButtonEnabled,
         Action clearSearchFilter)
     {
-      // 检查路径是否为空
-      if (string.IsNullOrWhiteSpace(pathsText))
-      {
-        _dialogManager.ShowCustomMessageBox("错误", "请先输入要扫描的Git仓库路径", false);
-        return false;
-      }
-
-      // 清空现有的结果
+      // 在开始新查询前，清空之前的数据，防止不同作者数据混合
       _allCommits.Clear();
       _filteredCommits.Clear();
+
+      // 设置运行状态
       _isRunning = true;
 
-      // 禁用开始按钮，启用停止按钮
+      // 设置UI状态
       disableStartButton();
       enableStopButton();
 
@@ -107,6 +103,13 @@ namespace GitCommitsWPF.Services
 
       try
       {
+        // 检查路径是否为空
+        if (string.IsNullOrWhiteSpace(pathsText))
+        {
+          _dialogManager.ShowCustomMessageBox("错误", "请先输入要扫描的Git仓库路径", false);
+          return false;
+        }
+
         // 先添加一个分隔线
         _outputManager.AddSeparator();
 
@@ -266,6 +269,10 @@ namespace GitCommitsWPF.Services
         string authorFilter,
         bool verifyGitPaths)
     {
+      // 清空之前的结果，确保数据干净
+      _allCommits.Clear();
+      _filteredCommits.Clear();
+
       // 获取路径列表
       var paths = pathsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
 
@@ -276,6 +283,13 @@ namespace GitCommitsWPF.Services
       if (string.IsNullOrEmpty(until))
       {
         until = DateTime.Now.AddDays(1).ToString("yyyy-MM-dd");
+      }
+
+      // 输出当前筛选条件，帮助调试
+      _outputManager.UpdateOutput($"筛选条件 - 作者: {(string.IsNullOrEmpty(author) ? "全部" : author)}");
+      if (!string.IsNullOrEmpty(authorFilter))
+      {
+        _outputManager.UpdateOutput($"筛选条件 - 作者关键词: {authorFilter}");
       }
 
       // 使用GitOperationsManager异步收集Git提交
@@ -342,6 +356,20 @@ namespace GitCommitsWPF.Services
       string format = "";
       bool showRepeatedRepoNames = false;
 
+      // 确保每个提交记录的仓库信息正确设置
+      foreach (var commit in _allCommits)
+      {
+        if (string.IsNullOrEmpty(commit.Repository) && !string.IsNullOrEmpty(commit.RepoPath))
+        {
+          commit.Repository = Path.GetFileName(commit.RepoPath);
+        }
+
+        if (string.IsNullOrEmpty(commit.RepoFolder) && !string.IsNullOrEmpty(commit.RepoPath))
+        {
+          commit.RepoFolder = Path.GetFileName(commit.RepoPath);
+        }
+      }
+
       // 在UI线程上获取所有配置项
       Application.Current.Dispatcher.Invoke(() =>
       {
@@ -353,7 +381,7 @@ namespace GitCommitsWPF.Services
         format = getFormatText();
         showRepeatedRepoNames = getShowRepeatedRepoNames();
 
-        // 使用DataGridManager更新数据源
+        // 然后更新数据源
         _dataGridManager.UpdateDataSource(_allCommits);
         _filteredCommits = new List<CommitInfo>(_allCommits); // 重置筛选结果
         clearSearchFilter(); // 清空搜索框
