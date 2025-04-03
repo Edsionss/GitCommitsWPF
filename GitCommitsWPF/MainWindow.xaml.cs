@@ -42,11 +42,10 @@ namespace GitCommitsWPF
     private const int MaxRecentLocations = 10; // 最多保存10个最近扫描的git仓库的位置
     private List<string> _saveLocations = new List<string>(); // 保存最近保存的文件的位置
     private const int MaxSaveLocations = 10; // 最多保存10个最近保存的文件的位置
-    private List<string> _recentAuthors = new List<string>(); // 保存最近使用的作者
-    private List<string> _scannedAuthors = new List<string>(); // 保存扫描出来的作者
-    private const int MaxRecentAuthors = 10; // 最多保存10个最近使用的作者
     private string _tempScanPath = ""; // 用于保存临时扫描路径
-    // private TextBox FormattedResultTextBox; // 结果页签中的文本框
+    // AuthorManager实例，用于管理作者相关功能
+    private AuthorManager _authorManager = new AuthorManager();
+
     public MainWindow()
     {
       InitializeComponent();
@@ -68,15 +67,12 @@ namespace GitCommitsWPF
       // 加载最近的保存位置
       LoadSaveLocations();
 
-      // 加载最近使用的作者
-      LoadRecentAuthors();
-
       // 监听作者文本框变化
       AuthorTextBox.TextChanged += (s, e) =>
       {
         if (!string.IsNullOrWhiteSpace(AuthorTextBox.Text))
         {
-          AddToRecentAuthors(AuthorTextBox.Text);
+          _authorManager.AddToRecentAuthors(AuthorTextBox.Text);
         }
       };
 
@@ -1207,7 +1203,7 @@ namespace GitCommitsWPF
       // 添加到最近使用的作者
       if (!string.IsNullOrEmpty(author))
       {
-        AddToRecentAuthors(author);
+        _authorManager.AddToRecentAuthors(author);
       }
 
       // 设置进度条到完成状态
@@ -3041,15 +3037,7 @@ namespace GitCommitsWPF
         authors.AddRange(newAuthors);
 
         // 也添加到扫描作者列表
-        foreach (var author in newAuthors)
-        {
-          if (!_scannedAuthors.Contains(author))
-          {
-            _scannedAuthors.Add(author);
-          }
-        }
-        // 保存扫描到的作者
-        SaveScannedAuthors();
+        _authorManager.AddScannedAuthors(newAuthors);
 
         UpdateOutput(string.Format("从仓库 '{0}' 找到 {1} 个作者", repo.Name, newAuthors.Count));
 
@@ -3268,7 +3256,7 @@ namespace GitCommitsWPF
     private void LastAuthor_Click(object sender, RoutedEventArgs e)
     {
       // 如果最近作者列表为空，则尝试从已有提交中收集
-      if (_recentAuthors.Count == 0)
+      if (_authorManager.RecentAuthors.Count == 0)
       {
         // 从已有提交中收集作者信息
         HashSet<string> uniqueAuthors = new HashSet<string>();
@@ -3290,7 +3278,7 @@ namespace GitCommitsWPF
         // 添加找到的作者到最近作者列表
         foreach (var author in uniqueAuthors)
         {
-          AddToRecentAuthors(author);
+          _authorManager.AddToRecentAuthors(author);
         }
       }
 
@@ -3327,7 +3315,7 @@ namespace GitCommitsWPF
       var recentListBox = new ListBox
       {
         Margin = new Thickness(5),
-        ItemsSource = _recentAuthors
+        ItemsSource = _authorManager.RecentAuthors
       };
       recentTab.Content = recentListBox;
 
@@ -3367,7 +3355,7 @@ namespace GitCommitsWPF
       var scannedListBox = new ListBox
       {
         Margin = new Thickness(5),
-        ItemsSource = _scannedAuthors.OrderBy(a => a).ToList()
+        ItemsSource = _authorManager.ScannedAuthors.OrderBy(a => a).ToList()
       };
       DockPanel.SetDock(scannedListBox, Dock.Top);
       scannedPanel.Children.Add(scannedListBox);
@@ -3378,11 +3366,11 @@ namespace GitCommitsWPF
         string filter = searchBox.Text.ToLower();
         if (string.IsNullOrEmpty(filter))
         {
-          scannedListBox.ItemsSource = _scannedAuthors.OrderBy(a => a).ToList();
+          scannedListBox.ItemsSource = _authorManager.ScannedAuthors.OrderBy(a => a).ToList();
         }
         else
         {
-          scannedListBox.ItemsSource = _scannedAuthors
+          scannedListBox.ItemsSource = _authorManager.ScannedAuthors
                     .Where(a => a.ToLower().Contains(filter))
                     .OrderBy(a => a)
                     .ToList();
@@ -3433,7 +3421,7 @@ namespace GitCommitsWPF
           // 如果选择的是扫描作者，添加到最近作者列表
           if (tabControl.SelectedItem == scannedTab)
           {
-            AddToRecentAuthors(selectedAuthor);
+            _authorManager.AddToRecentAuthors(selectedAuthor);
           }
 
           selectWindow.Close();
@@ -3461,8 +3449,8 @@ namespace GitCommitsWPF
         if (tabControl.SelectedItem == recentTab)
         {
           // 清除最近作者
-          _recentAuthors.Clear();
-          SaveRecentAuthors();
+          _authorManager.RecentAuthors.Clear();
+          _authorManager.SaveRecentAuthors();
           recentListBox.ItemsSource = null;
           recentListBox.Items.Clear();
           ShowCustomMessageBox("信息", "已清除最近作者记录。", false);
@@ -3470,8 +3458,8 @@ namespace GitCommitsWPF
         else
         {
           // 清除扫描作者
-          _scannedAuthors.Clear();
-          SaveScannedAuthors();
+          _authorManager.ScannedAuthors.Clear();
+          _authorManager.SaveScannedAuthors();
           scannedListBox.ItemsSource = null;
           scannedListBox.Items.Clear();
           ShowCustomMessageBox("信息", "已清除扫描作者记录。", false);
@@ -3505,96 +3493,31 @@ namespace GitCommitsWPF
     // 加载最近使用的作者
     private void LoadRecentAuthors()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string recentAuthorsFile = Path.Combine(appDataPath, "RecentAuthors.txt");
-
-        if (File.Exists(recentAuthorsFile))
-        {
-          _recentAuthors = FileUtility.ReadLinesFromFile(recentAuthorsFile);
-        }
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误，使用空的最近作者列表
-        _recentAuthors = new List<string>();
-        Debug.WriteLine("加载最近作者时出错: " + ex.Message);
-      }
+      _authorManager.LoadRecentAuthors();
     }
 
     // 保存最近使用的作者
     private void SaveRecentAuthors()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string recentAuthorsFile = Path.Combine(appDataPath, "RecentAuthors.txt");
-        FileUtility.SaveLinesToFile(recentAuthorsFile, _recentAuthors);
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误
-        Debug.WriteLine("保存最近作者时出错: " + ex.Message);
-      }
+      _authorManager.SaveRecentAuthors();
     }
 
     // 添加作者到最近作者列表
     private void AddToRecentAuthors(string author)
     {
-      if (string.IsNullOrEmpty(author)) return;
-
-      // 移除相同的作者（如果存在）
-      _recentAuthors.Remove(author);
-
-      // 添加到列表开头
-      _recentAuthors.Insert(0, author);
-
-      // 限制最近作者数量
-      if (_recentAuthors.Count > MaxRecentAuthors)
-      {
-        _recentAuthors.RemoveAt(_recentAuthors.Count - 1);
-      }
-
-      // 保存更新后的列表
-      SaveRecentAuthors();
+      _authorManager.AddToRecentAuthors(author);
     }
 
     // 加载扫描到的作者
     private void LoadScannedAuthors()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string scannedAuthorsFile = Path.Combine(appDataPath, "ScannedAuthors.txt");
-
-        if (File.Exists(scannedAuthorsFile))
-        {
-          _scannedAuthors = FileUtility.ReadLinesFromFile(scannedAuthorsFile);
-        }
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误，使用空的扫描作者列表
-        _scannedAuthors = new List<string>();
-        Debug.WriteLine("加载扫描作者时出错: " + ex.Message);
-      }
+      _authorManager.LoadScannedAuthors();
     }
 
     // 保存扫描到的作者
     private void SaveScannedAuthors()
     {
-      try
-      {
-        string appDataPath = FileUtility.GetAppDataDirectory();
-        string scannedAuthorsFile = Path.Combine(appDataPath, "ScannedAuthors.txt");
-        FileUtility.SaveLinesToFile(scannedAuthorsFile, _scannedAuthors);
-      }
-      catch (Exception ex)
-      {
-        // 忽略错误
-        Debug.WriteLine("保存扫描作者时出错: " + ex.Message);
-      }
+      _authorManager.SaveScannedAuthors();
     }
   }
 }
