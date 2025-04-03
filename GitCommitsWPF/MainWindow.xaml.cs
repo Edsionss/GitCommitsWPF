@@ -66,6 +66,9 @@ namespace GitCommitsWPF
     // SearchFilterManager实例，用于管理搜索过滤功能
     private SearchFilterManager _searchFilterManager = new SearchFilterManager();
 
+    // FormattingManager实例，用于管理格式化显示功能
+    private FormattingManager _formattingManager = new FormattingManager();
+
     public MainWindow()
     {
       InitializeComponent();
@@ -466,18 +469,20 @@ namespace GitCommitsWPF
       if (formattedResultTextBox != null)
       {
         // 获取选择的字段
-        List<string> selectedFields = new List<string>();
-        if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
-        if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
-        if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
-        if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
-        if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
-        if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
-        if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
+        List<string> selectedFields = _formattingManager.GetSelectedFields(
+            RepositoryFieldCheckBox.IsChecked == true,
+            RepoPathFieldCheckBox.IsChecked == true,
+            RepoFolderFieldCheckBox.IsChecked == true,
+            CommitIdFieldCheckBox.IsChecked == true,
+            AuthorFieldCheckBox.IsChecked == true,
+            DateFieldCheckBox.IsChecked == true,
+            MessageFieldCheckBox.IsChecked == true);
 
         // 生成统计数据(如果启用)
         var statsOutput = new StringBuilder();
-        if (EnableStatsCheckBox.IsChecked == true)
+        bool enableStats = EnableStatsCheckBox.IsChecked == true;
+
+        if (enableStats)
         {
           statsOutput.AppendLine("\n======== 提交统计 ========\n");
 
@@ -498,44 +503,14 @@ namespace GitCommitsWPF
         string format = FormatTextBox.Text;
         if (!string.IsNullOrEmpty(format))
         {
-          var formattedOutput = new StringBuilder();
-          var displayedRepos = new Dictionary<string, bool>();
-          bool showRepeatedRepoNames = ShowRepeatedRepoNamesCheckBox.IsChecked == true;
-
-          foreach (var commit in _allCommits)
-          {
-            string line = format;
-
-            // 获取当前提交的仓库标识符
-            string repoKey = !string.IsNullOrEmpty(commit.RepoFolder) ? commit.RepoFolder : commit.Repository;
-
-            // 替换所有占位符
-            line = line.Replace("{Repository}",
-                (!showRepeatedRepoNames && displayedRepos.ContainsKey(repoKey)) ?
-                new string(' ', repoKey.Length) : commit.Repository);
-
-            line = line.Replace("{RepoPath}", commit.RepoPath);
-
-            line = line.Replace("{RepoFolder}",
-                (!showRepeatedRepoNames && displayedRepos.ContainsKey(repoKey)) ?
-                new string(' ', repoKey.Length) : commit.RepoFolder);
-
-            line = line.Replace("{CommitId}", commit.CommitId ?? "");
-            line = line.Replace("{Author}", commit.Author ?? "");
-            line = line.Replace("{Date}", commit.Date ?? "");
-            line = line.Replace("{Message}", commit.Message ?? "");
-
-            formattedOutput.AppendLine(line);
-
-            // 标记此仓库已显示
-            if (!displayedRepos.ContainsKey(repoKey))
-            {
-              displayedRepos[repoKey] = true;
-            }
-          }
+          // 使用FormattingManager格式化提交记录
+          string formattedOutput = _formattingManager.FormatCommits(
+              _allCommits,
+              format,
+              ShowRepeatedRepoNamesCheckBox.IsChecked == true);
 
           // 合并统计和格式化输出
-          formattedContent = statsOutput.ToString() + formattedOutput.ToString();
+          formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), formattedOutput, enableStats);
         }
         else
         {
@@ -543,22 +518,13 @@ namespace GitCommitsWPF
           var filteredCommits = new List<CommitInfo>();
           foreach (var commit in _allCommits)
           {
-            var filteredCommit = new CommitInfo();
-
-            if (selectedFields.Contains("Repository")) filteredCommit.Repository = commit.Repository;
-            if (selectedFields.Contains("RepoPath")) filteredCommit.RepoPath = commit.RepoPath;
-            if (selectedFields.Contains("RepoFolder")) filteredCommit.RepoFolder = commit.RepoFolder;
-            if (selectedFields.Contains("CommitId")) filteredCommit.CommitId = commit.CommitId;
-            if (selectedFields.Contains("Author")) filteredCommit.Author = commit.Author;
-            if (selectedFields.Contains("Date")) filteredCommit.Date = commit.Date;
-            if (selectedFields.Contains("Message")) filteredCommit.Message = commit.Message;
-
-            filteredCommits.Add(filteredCommit);
+            // 使用FormattingManager创建过滤后的提交信息
+            filteredCommits.Add(_formattingManager.CreateFilteredCommit(commit, selectedFields));
           }
 
           // 使用JSON格式
           string jsonOutput = JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented);
-          formattedContent = statsOutput.ToString() + Environment.NewLine + jsonOutput;
+          formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), jsonOutput, enableStats);
         }
 
         formattedResultTextBox.Text = formattedContent;
@@ -704,13 +670,14 @@ namespace GitCommitsWPF
       List<string> selectedFields = new List<string>();
       Dispatcher.Invoke(() =>
       {
-        if (RepositoryFieldCheckBox.IsChecked == true) selectedFields.Add("Repository");
-        if (RepoPathFieldCheckBox.IsChecked == true) selectedFields.Add("RepoPath");
-        if (RepoFolderFieldCheckBox.IsChecked == true) selectedFields.Add("RepoFolder");
-        if (CommitIdFieldCheckBox.IsChecked == true) selectedFields.Add("CommitId");
-        if (AuthorFieldCheckBox.IsChecked == true) selectedFields.Add("Author");
-        if (DateFieldCheckBox.IsChecked == true) selectedFields.Add("Date");
-        if (MessageFieldCheckBox.IsChecked == true) selectedFields.Add("Message");
+        selectedFields = _formattingManager.GetSelectedFields(
+          RepositoryFieldCheckBox.IsChecked == true,
+          RepoPathFieldCheckBox.IsChecked == true,
+          RepoFolderFieldCheckBox.IsChecked == true,
+          CommitIdFieldCheckBox.IsChecked == true,
+          AuthorFieldCheckBox.IsChecked == true,
+          DateFieldCheckBox.IsChecked == true,
+          MessageFieldCheckBox.IsChecked == true);
 
         // 设置DataGrid的数据源
         CommitsDataGrid.ItemsSource = _allCommits;
@@ -743,9 +710,12 @@ namespace GitCommitsWPF
 
       // 应用自定义格式
       string format = "";
+      bool showRepeatedRepoNames = false;
+
       Dispatcher.Invoke(() =>
       {
         format = FormatTextBox.Text;
+        showRepeatedRepoNames = ShowRepeatedRepoNamesCheckBox.IsChecked == true;
       });
 
       // 用于保存格式化后的输出内容
@@ -753,49 +723,14 @@ namespace GitCommitsWPF
 
       if (!string.IsNullOrEmpty(format))
       {
-        var formattedOutput = new StringBuilder();
-        var displayedRepos = new Dictionary<string, bool>();
-        bool showRepeatedRepoNames = false;
-
-        Dispatcher.Invoke(() =>
-        {
-          showRepeatedRepoNames = ShowRepeatedRepoNamesCheckBox.IsChecked == true;
-        });
-
-        foreach (var commit in _allCommits)
-        {
-          string line = format;
-
-          // 获取当前提交的仓库标识符
-          string repoKey = !string.IsNullOrEmpty(commit.RepoFolder) ? commit.RepoFolder : commit.Repository;
-
-          // 替换所有占位符
-          line = line.Replace("{Repository}",
-              (!showRepeatedRepoNames && displayedRepos.ContainsKey(repoKey)) ?
-              new string(' ', repoKey.Length) : commit.Repository);
-
-          line = line.Replace("{RepoPath}", commit.RepoPath);
-
-          line = line.Replace("{RepoFolder}",
-              (!showRepeatedRepoNames && displayedRepos.ContainsKey(repoKey)) ?
-              new string(' ', repoKey.Length) : commit.RepoFolder);
-
-          line = line.Replace("{CommitId}", commit.CommitId ?? "");
-          line = line.Replace("{Author}", commit.Author ?? "");
-          line = line.Replace("{Date}", commit.Date ?? "");
-          line = line.Replace("{Message}", commit.Message ?? "");
-
-          formattedOutput.AppendLine(line);
-
-          // 标记此仓库已显示
-          if (!displayedRepos.ContainsKey(repoKey))
-          {
-            displayedRepos[repoKey] = true;
-          }
-        }
+        // 使用FormattingManager格式化提交记录
+        string formattedOutput = _formattingManager.FormatCommits(
+            _allCommits,
+            format,
+            showRepeatedRepoNames);
 
         // 合并统计和格式化输出
-        formattedContent = statsOutput.ToString() + formattedOutput.ToString();
+        formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), formattedOutput, enableStats);
 
         Dispatcher.Invoke(() =>
         {
@@ -814,22 +749,13 @@ namespace GitCommitsWPF
         var filteredCommits = new List<CommitInfo>();
         foreach (var commit in _allCommits)
         {
-          var filteredCommit = new CommitInfo();
-
-          if (selectedFields.Contains("Repository")) filteredCommit.Repository = commit.Repository;
-          if (selectedFields.Contains("RepoPath")) filteredCommit.RepoPath = commit.RepoPath;
-          if (selectedFields.Contains("RepoFolder")) filteredCommit.RepoFolder = commit.RepoFolder;
-          if (selectedFields.Contains("CommitId")) filteredCommit.CommitId = commit.CommitId;
-          if (selectedFields.Contains("Author")) filteredCommit.Author = commit.Author;
-          if (selectedFields.Contains("Date")) filteredCommit.Date = commit.Date;
-          if (selectedFields.Contains("Message")) filteredCommit.Message = commit.Message;
-
-          filteredCommits.Add(filteredCommit);
+          // 使用FormattingManager创建过滤后的提交信息
+          filteredCommits.Add(_formattingManager.CreateFilteredCommit(commit, selectedFields));
         }
 
         // 使用JSON格式
         string jsonOutput = JsonConvert.SerializeObject(filteredCommits, Newtonsoft.Json.Formatting.Indented);
-        formattedContent = statsOutput.ToString() + Environment.NewLine + jsonOutput;
+        formattedContent = _formattingManager.CombineOutput(statsOutput.ToString(), jsonOutput, enableStats);
 
         Dispatcher.Invoke(() =>
         {
