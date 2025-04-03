@@ -190,11 +190,15 @@ namespace GitCommitsWPF.Services
     /// </summary>
     public void CheckAndRemoveDuplicatePaths()
     {
-      if (_pathsTextBox == null || string.IsNullOrWhiteSpace(_pathsTextBox.Text))
+      if (_pathsTextBox == null)
         return;
 
       // 捕获当前文本，确保中途不会修改
       string currentText = _pathsTextBox.Text;
+
+      // 如果文本框为空，直接返回
+      if (string.IsNullOrWhiteSpace(currentText))
+        return;
 
       // 获取当前所有路径
       var paths = currentText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
@@ -239,8 +243,8 @@ namespace GitCommitsWPF.Services
               _pathsTextBox.CaretIndex = _pathsTextBox.Text.Length;
             }
 
-            // 只在实际移除了路径时显示提示
-            _dialogManager.ShowCustomMessageBox("提示", "已自动移除重复或空白的路径", false);
+            // 使用临时警告框显示提示，不需要用户确认
+            _dialogManager.ShowTemporaryWarningMessageBox("警告", "已自动移除重复或空白的路径");
           }
         });
       }

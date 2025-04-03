@@ -334,5 +334,118 @@ namespace GitCommitsWPF.Utils
       // 显示窗口
       customMessageWindow.ShowDialog();
     }
+
+    /// <summary>
+    /// 显示临时警告消息框，1秒后自动关闭
+    /// </summary>
+    /// <param name="title">对话框标题</param>
+    /// <param name="message">显示的警告内容</param>
+    public void ShowTemporaryWarningMessageBox(string title, string message)
+    {
+      try
+      {
+        // 创建一个轻量级的消息提示控件
+        var messageControl = new Border
+        {
+          Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFF4C0")), // 黄色警告背景色
+          BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E5CC7A")),
+          BorderThickness = new Thickness(1),
+          CornerRadius = new CornerRadius(4),
+          Padding = new Thickness(10),
+          Margin = new Thickness(0, 10, 0, 0),
+          HorizontalAlignment = HorizontalAlignment.Center,
+          VerticalAlignment = VerticalAlignment.Top,
+          MaxWidth = 400,
+          MinWidth = 250
+        };
+
+        // 设置阴影效果
+        messageControl.Effect = new System.Windows.Media.Effects.DropShadowEffect
+        {
+          Color = Colors.Gray,
+          BlurRadius = 10,
+          ShadowDepth = 3,
+          Opacity = 0.3
+        };
+
+        // 创建内容面板
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+
+        // 警告图标
+        var warningIcon = new TextBlock
+        {
+          Text = "⚠️",
+          FontSize = 18,
+          Margin = new Thickness(0, 0, 10, 0),
+          VerticalAlignment = VerticalAlignment.Center
+        };
+        panel.Children.Add(warningIcon);
+
+        // 消息文本
+        var messageText = new TextBlock
+        {
+          Text = message,
+          TextWrapping = TextWrapping.Wrap,
+          VerticalAlignment = VerticalAlignment.Center,
+          Margin = new Thickness(0)
+        };
+        panel.Children.Add(messageText);
+
+        messageControl.Child = panel;
+
+        // 查找通知容器
+        var notificationContainer = FindNotificationContainer();
+        if (notificationContainer != null)
+        {
+          // 添加到通知容器
+          notificationContainer.Children.Add(messageControl);
+
+          // 设置动画淡出效果
+          var animation = new System.Windows.Media.Animation.DoubleAnimation
+          {
+            From = 1.0,
+            To = 0.0,
+            Duration = new Duration(TimeSpan.FromMilliseconds(500))
+          };
+
+          animation.Completed += (s, e) =>
+          {
+            // 动画完成后移除控件
+            notificationContainer.Children.Remove(messageControl);
+          };
+
+          // 设置计时器延迟淡出
+          var timer = new System.Windows.Threading.DispatcherTimer
+          {
+            Interval = TimeSpan.FromSeconds(1) // 1秒后开始淡出动画
+          };
+          timer.Tick += (s, e) =>
+          {
+            timer.Stop();
+            messageControl.BeginAnimation(UIElement.OpacityProperty, animation);
+          };
+          timer.Start();
+        }
+      }
+      catch (Exception)
+      {
+        // 处理异常，避免闪退
+        // 即使无法显示提示，程序也应该继续运行
+      }
+    }
+
+    /// <summary>
+    /// 查找主窗口中的通知容器
+    /// </summary>
+    /// <returns>通知容器Grid</returns>
+    private Grid FindNotificationContainer()
+    {
+      // 如果窗口为空，返回null
+      if (_ownerWindow == null)
+        return null;
+
+      // 尝试找到命名为NotificationContainer的Grid
+      return _ownerWindow.FindName("NotificationContainer") as Grid;
+    }
   }
 }

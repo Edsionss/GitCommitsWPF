@@ -48,6 +48,9 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- 消息通知容器，用于显示临时提示消息 -->
+        <Grid x:Name="NotificationContainer" Grid.Row="0" Grid.RowSpan="3" Panel.ZIndex="1000" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,20,0,0"/>
+
         <!-- 设置区域 -->
         <TabControl Grid.Row="0" Margin="10" Height="400">
             <TabItem Header="基本设置">

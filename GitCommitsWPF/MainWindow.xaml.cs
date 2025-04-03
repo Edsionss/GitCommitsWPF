@@ -98,7 +98,6 @@ namespace GitCommitsWPF
     private ClipboardManager _clipboardManager;
 
     // 用于防止TextChanged事件循环触发
-    private DispatcherTimer _pathsTextChangedTimer;
     private bool _isPathsTextBeingProcessed = false;
 
     public MainWindow()
@@ -223,33 +222,19 @@ namespace GitCommitsWPF
         if (_isPathsTextBeingProcessed)
           return;
 
-        // 取消之前的计时器（如果存在）
-        if (_pathsTextChangedTimer != null)
+        // 设置标志位，防止循环调用
+        _isPathsTextBeingProcessed = true;
+
+        try
         {
-          _pathsTextChangedTimer.Stop();
+          // 立即处理文本变化，检查并移除重复路径
+          _repositorySelectionManager.CheckAndRemoveDuplicatePaths();
         }
-
-        // 创建新的计时器
-        _pathsTextChangedTimer = new DispatcherTimer();
-        _pathsTextChangedTimer.Interval = TimeSpan.FromMilliseconds(1000); // 1秒延迟
-        _pathsTextChangedTimer.Tick += (sender, args) =>
+        finally
         {
-          _pathsTextChangedTimer.Stop();
-
-          // 设置标志位，防止循环调用
-          _isPathsTextBeingProcessed = true;
-
-          try
-          {
-            _repositorySelectionManager.CheckAndRemoveDuplicatePaths();
-          }
-          finally
-          {
-            // 恢复标志位
-            _isPathsTextBeingProcessed = false;
-          }
-        };
-        _pathsTextChangedTimer.Start();
+          // 恢复标志位
+          _isPathsTextBeingProcessed = false;
+        }
       };
 
       // 加载扫描到的作者
